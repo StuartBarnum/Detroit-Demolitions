@@ -3,10 +3,10 @@ title: "Blight Predictions for Detroit"
 output: html_notebook
 ---
 
-In this project, I will attempt to predict whether, for any given parcel in Detroit with a building on it, whether a building on that parcel will be be targetted for demoltion. Potential predictors, downloaded from  https://data.detroitmi.gov/, include citations relatated to the building, crime, and complaints concerning the building related to blight. The probject is currently at the data cleaning stage, and I may add some other data to the project. So far, I am using about 3GB of data.
+In this project, I will attempt to predict whether, for any given parcel in Detroit with a building on it, whether a building on that parcel will be be targetted for demoltion. Potential predictors include citations relatated to the building, crime, and complaints concerning the building related to blight. The probject is currently at the data cleaning stage, and I may add some other data to the project. So far, I am using about 3GB of data, downloaded from `https://data.detroitmi.gov/`.
 
 
-```{r}
+```{r, message = FALSE}
 library(tidyverse)
 library(sf)
 library(ggmap)
