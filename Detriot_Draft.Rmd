@@ -345,7 +345,7 @@ rm(improve_detroit_issues_split, improve_detroit_issues_leftover_sf)
 
 We begin the assignment of labels to the buidings: blighted or not blighted. Buildings will be represented by parcels that have or have had buildings on them, whether by being so represented as in the `parcels_sf` data frame as including structures or in the dismantle permits dataframe as having had a dismante permit associated with it, thus suggesting that there *was* a building on the parcel. 
 
-We will use parcel numbers to refer to the parcels. This works because parcelnum column contains no repeats over different rows (see below, in which `duplicate_parcel_numbers_in_parcel_data` has zero rows). 
+We will use parcel numbers to refer to the parcels. However, as the following bit of code shows, the parcels dataset contains a few rows in which the parcel humbers are the same (`duplicate_parcel_numbers_in_parcel_data` contains 78 rows). 
 
 ```{r}
 #As per above, following returns an empty data frame
@@ -358,7 +358,7 @@ duplicate_parcel_numbers_in_parcel_data <-
 duplicate_parcel_numbers_in_parcel_data
 rm(duplicate_parcel_numbers_in_parcel_data)
 ```
-The dismantle permits data, however, may seem less clean than the parcel_sf, as it contains repetitions of the parcel numbers that correspond to different addresses that would refer, in some cases, to distinct locations. (It also indicates that a few individual locatations, identified with addresses, had more than one associated dismantle permit. This need not be problematic---a permit could expire before the work is carried out, or there could be more than one structure on a parcel.)  These repetitions are in `duplicate_parcel_numbers_over_distinct_addresses`, which contains 260 rows. I should also note that, in  most of these cases with duplicate parcel numbers (and addresses indicating different locations), the recorded latitude and longitude are identical. We can thus infer that some of this location information is incorrect.
+The dismantle permits data also contains some duplicate parcel numbers over rows, in some cases over rows that contain address information suggesting that the location is different. (It also indicates that a few individual locatations, identified with addresses, had more than one associated dismantle permit. This need not be problematic---a permit could expire before the work is carried out, or there could be more than one structure on a parcel.)  These repetitions are in `duplicate_parcel_numbers_over_distinct_addresses`, which contains 260 rows. I should also note that, in  most of these cases with duplicate parcel numbers (and addresses indicating different locations), the recorded latitude and longitude are identical. We can thus infer that some of this location information is incorrect.
 ```{r}
 dup_par_num_in_dismantle_data <-
   dismantle_permits_sf %>%
