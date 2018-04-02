@@ -386,7 +386,7 @@ as.data.frame(dup_par_num_over_distinct_addresses)
 rm(dup_par_num_over_distinct_addresses)
 
 ```
-Some of repeats of the parcel numbers would seem to correspond to the some location (with the addresses recorded somewhat differently), while others would not. The numbers rows in question is relatively small (272), so I will ignore the issue for now. (I will eventually either remove this data are attempt to attache the correct location information.)
+Some of repeats of the parcel numbers would seem to correspond to the some location (with the addresses recorded somewhat differently), while others would not. The number of rows in question is relatively small (272), so I will ignore the issue for now. (I will eventually either remove this data are attempt to attache the correct location information.)
 
 ```{r, eval = FALSE}
 #note that the following removes rows with duplicate parcels
