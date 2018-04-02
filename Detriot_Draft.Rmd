@@ -467,10 +467,10 @@ ggplot(data=xy.sf) +
     geom_density2d(data=xy.sf, aes(x=x,y=y,colour=..level..))
 
 
-seattle_gg <- get_map("Detroit", maptype = "toner-lite",
+detroit_gg <- get_map("Detroit", maptype = "toner-lite",
                       zoom = 11)
 
-ggmap(seattle_gg)
+ggmap(detroit_gg)
 ```
 
 
