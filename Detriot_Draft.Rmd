@@ -288,10 +288,6 @@ rm(crime_to_12062016, crime_to_12062016_leftovers_geocode, crime_to_12062016_lef
 
 
 ```{r}
-register_google(key = "AIzaSyCBg40Tc3ph0-NMzlA0ZSiyFkBicUlVM48")
-```
-
-```{r}
 
 #consider the examples in the recent crime data for which the conversion to sf didn't work, remove the two columns that we have added, and create and address column for geocoding
 crime_12062016_to_03192018_leftovers <- crime_12062016_to_03192018_split[[2]] %>%
