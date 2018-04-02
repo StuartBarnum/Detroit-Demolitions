@@ -6,7 +6,7 @@ output: html_notebook
 In this project, I will attempt to predict whether, for any given parcel in Detroit with a building on it, whether a building on that parcel will be be targetted for demoltion. Potential predictors include citations relatated to the building, crime, and complaints concerning the building related to blight. The probject is currently at the data cleaning stage, and I may add some other data to the project. So far, I am using about 3GB of data, downloaded from `https://data.detroitmi.gov/`.
 
 
-```{r, message = FALSE}
+```{r, message = FALSE, warning = FALSE, results = FALSE}
 library(tidyverse)
 library(sf)
 library(ggmap)
@@ -460,11 +460,6 @@ library(ggmap)
 ggplot(blight_violations_sf %>% select(geometry)) +
   geom_sf() + 
   geom_density2d(data = blight_violations_sf %>% select(geometry))
-
-
-ggplot(data=xy.sf) +
-    geom_sf() +
-    geom_density2d(data=xy.sf, aes(x=x,y=y,colour=..level..))
 
 
 detroit_gg <- get_map("Detroit", maptype = "toner-lite",
