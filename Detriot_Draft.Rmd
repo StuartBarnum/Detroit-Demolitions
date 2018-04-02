@@ -35,7 +35,7 @@ improve_detroit_issues <- read_csv("./data/Improve_Detroit_Issues_3_19_2018.csv"
                                    guess_max = 10^6)
 
 #the shapefile representing Detroit parcels, read into 
-parcel_sf <- st_read("/Users/stuartbarnum/Desktop/urban blight/data/Parcel Map")
+parcel_sf <- st_read("./data/Parcel Map")
 
 #writeLines(c("parcel_sf", " ", colnames(parcel_sf)), "parcel_sf.txt")
 
@@ -334,18 +334,18 @@ rm(crime_12062016_to_03192018_split, crime_12062016_to_03192018_geocode, crime_1
 #geocode the one item in the Improve Detroit Issues data for which the given coordinates were obviously incorrect, and then convert to an sf object. If geocoding fails, run this bit again
 improve_detroit_issues_leftover_sf <- improve_detroit_issues_split[[2]] %>%
   select(-extracted_lat, -extracted_lon) %>%
-  mutate(location = map(Address, geocode)) %>%
+  mutate(location = map(Address, geocode_pause)) %>%
   unnest(location) %>% 
   st_as_sf(coords = c("lon", "lat"), crs = 4326)  
 
 #splice with the previously generated sf dataframe
 improve_detroit_issues <- rbind(improve_detroit_issues_split[[1]], improve_detroit_issues_leftover_sf)
 
-rm(improve_detroit_issues_split, improve_detroit_issues_leftover, improve_detroit_issues_leftover_sf)
+rm(improve_detroit_issues_split, improve_detroit_issues_leftover_sf)
 
 ```
 
-We begin the assignment of labels to the buidings: blighted or not blighted. Buildings will be represented by parcels that have or have had buildings on them, whether by being so represented as in the `parcels_sf` data frame as including structures or in the dismantle permits dataframe as having had a dismante permit associated with it, thus suggested that there *was* a building on the parcel. 
+We begin the assignment of labels to the buidings: blighted or not blighted. Buildings will be represented by parcels that have or have had buildings on them, whether by being so represented as in the `parcels_sf` data frame as including structures or in the dismantle permits dataframe as having had a dismante permit associated with it, thus suggesting that there *was* a building on the parcel. 
 
 We will use parcel numbers to refer to the parcels. This works because parcelnum column contains no repeats over different rows (see below, in which `duplicate_parcel_numbers_in_parcel_data` has zero rows). 
 
@@ -360,7 +360,7 @@ duplicate_parcel_numbers_in_parcel_data <-
 duplicate_parcel_numbers_in_parcel_data
 rm(duplicate_parcel_numbers_in_parcel_data)
 ```
-The dismantle permits data, however, may seem less clean than the parcel_sf, as it contains repetitions of the parcel numbers that correspond to different addresses that would refer, in some cases, to distanct locations. (It also indicates that a few individual locatations, identified with addresses, had more than one associated dismantle permit. This need not be problematic---a permit could expire before the work is carried out, or there could be more than one structure on a parcel.)  These repetitions are in `duplicate_parcel_numbers_over_distinct_addresses`, which contains 260 rows. I should also note that, in  most of these cases with duplicate parcel numbers (and addresses indicating different locations), the recorded latitude and longitude are identical. We can thus infer that some of this location information is incorrect.
+The dismantle permits data, however, may seem less clean than the parcel_sf, as it contains repetitions of the parcel numbers that correspond to different addresses that would refer, in some cases, to distinct locations. (It also indicates that a few individual locatations, identified with addresses, had more than one associated dismantle permit. This need not be problematic---a permit could expire before the work is carried out, or there could be more than one structure on a parcel.)  These repetitions are in `duplicate_parcel_numbers_over_distinct_addresses`, which contains 260 rows. I should also note that, in  most of these cases with duplicate parcel numbers (and addresses indicating different locations), the recorded latitude and longitude are identical. We can thus infer that some of this location information is incorrect.
 ```{r}
 dup_par_num_in_dismantle_data <-
   dismantle_permits_sf %>%
@@ -390,7 +390,7 @@ rm(dup_par_num_over_distinct_addresses)
 ```
 Some of repeats of the parcel numbers would seem to correspond to the some location (with the addresses recorded somewhat differently), while others would not. The numbers rows in question is relatively small (272), so I will ignore the issue for now. (I will eventually either remove this data are attempt to attache the correct location information.)
 
-```{r}
+```{r, eval = FALSE}
 #note that the following removes rows with duplicate parcels
 #duplicate_parcel_numbers %>% distinct(parcelnum, .keep_all = TRUE)
 
