@@ -37,11 +37,9 @@ improve_detroit_issues <- read_csv("./data/Improve_Detroit_Issues_3_19_2018.csv"
 #the shapefile representing Detroit parcels, read into 
 parcel_sf <- st_read("./data/Parcel Map")
 
-#writeLines(c("parcel_sf", " ", colnames(parcel_sf)), "parcel_sf.txt")
-
 ```
 
-For all of the downloaded datasets other than the parcels dataset, we extract extract the usable latutude and longitude values and then use this information to form simple features (sf) objects. Rows with bviously incorrect values, or values that would represent positions well outside Detroit, are filtered out, together with rows for which the latitude or longitude data is missing.
+For all of the downloaded datasets other than the parcels dataset, we extract extract the usable latutude and longitude values and then use this information to form simple features (sf) objects. Rows with obviously incorrect values, or values that would represent positions well outside Detroit, are filtered out, together with rows for which the latitude or longitude data is missing.
 
 ```{r}
 
