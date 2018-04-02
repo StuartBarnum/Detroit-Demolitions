@@ -1,0 +1,125 @@
+---
+title: "SF experiments"
+output: html_notebook
+---
+
+```{r}
+
+temp <- tibble(address = c("232 Windsor Drive NE, Cedar Rapids, Iowa",
+                           "1704 Rochester Ave, Iowa City, Iowa",
+                           "141 East Park Road, Iowa City, IA 52242",
+                           "125 W. 1ST St, Mt. Vernon, IA"))
+
+temp <- temp %>% mutate(position = map(address, geocode_pause))
+
+temp <- temp %>% unnest(position)
+
+#write_csv(as.data.frame(temp), "./data/Iowa-Geocode-Example")       #3857   4326
+
+solon <- geocode_pause("Solon, Iowa")
+
+#write_csv(solon, "./data/Iowa-Geocode-Example_2")
+
+solon <- read_csv("./data/Iowa-Geocode-Example_2")
+
+solon_sf <- st_as_sf(solon, coords = c("lon", "lat"), crs = 4326)
+
+temp <- read_csv("./data/Iowa-Geocode-Example")
+
+temp3 <- temp %>% mutate(location = map2(lon, lat, function(x,y) {(c(x,y))}))
+
+matrix <- data.matrix(temp3 %>% select(lon, lat))
+matrix <- rbind(matrix, temp3$location[[1]])
+
+s_f <- st_sfc(st_point(temp3$location[[1]]),
+              st_point(temp3$location[[2]]),
+              st_point(temp3$location[[3]]),
+              st_point(temp3$location[[4]]),
+              crs = 4326)
+
+sf_poly <- st_sfc(st_polygon(list(matrix)))
+
+sf_poly_df <- tibble(geometry = sf_poly)
+
+st_crs(solon_sf) <- st_crs(sf_poly)
+
+st_within(solon_sf$geometry, sf_poly)
+
+x <- c(1,2)
+y <- c(3,4)
+rbind(x)
+
+st_distance(s_f)
+
+temp2 <- st_as_sf(temp, coords = c("lon", "lat"), crs = 4326)
+
+temp2 <- st_transform(temp2, 3857)
+
+st_distance(temp2)
+
+units::set_units(st_distance(s_f), miles)
+
+st_crs(parcel_sf)
+
+st_distance(parcel_sf[11177:11181,], parcel_sf[11221:11227,])
+
+parcel_sf[1177:1181,]
+
+parcel_sf[22221:22227,]
+
+x <- st_sfc(st_multipoint(rbind(c(2,2), c(3,3), c(3,2))))
+
+rgdal::make_EPSG()
+```
+
+
+
+
+
+Maps:
+```{r, eval = FALSE}
+library(ggmap)
+
+detroit_gg <- get_stamenmap(bbox = c(left=-83.35, bottom=42.22, right=-82.86, top=42.48),
+                            maptype = "toner-lite", zoom = 11)
+
+plot_point_sf <- function(sf_df) {
+  df <- sf_df %>% mutate(longitude = st_coordinates(sf_df)[,1],
+                                latitude = st_coordinates(sf_df)[,2]) %>%
+  as.data.frame %>% select(longitude, latitude) %>%
+  filter(latitude < 42.5 & longitude > -83.35)
+  
+  ggmap(detroit_gg) + geom_bin2d(data = df, aes(x = longitude, y = latitude), 
+                                 bins = 200) + 
+    scale_colour_gradient2(trans = "log2")
+}
+
+
+plot_point_sf(blight_violations_sf)
+
+plot_point_sf(dismantle_permits_sf)
+
+
+temp %>% as.data.frame %>% filter(is.na(latitude) | is.na(latitude))
+
+st_coordinates(blight_violations_sf)[,1]
+
+geom_density2d(data = blight_violations_sf %>% select(geometry))
+
+st_coordinates(solon_sf)[1]
+
+#left/bottom/right/top
+
+detroit_gg <- get_stamenmap(bbox = c(left=-83.5, bottom=42.22, right=-82.86, top=42.48),
+                            maptype = "toner-lite", zoom = 11)
+
+#left/bottom/right/top
+
+ggmap(detroit_gg) + plot_point_sf(dismantle_permits_sf)
+```
+
+
+
+
+
+

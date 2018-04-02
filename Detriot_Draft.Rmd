@@ -1,0 +1,484 @@
+---
+title: "Blight Predictions for Detroit"
+output: html_notebook
+---
+
+In this project, I will attempt to predict whether, for any given parcel in Detroit with a building on it, whether a building on that parcel will be be targetted for demoltion. Potential predictors, downloaded from  https://data.detroitmi.gov/, include citations relatated to the building, crime, and complaints concerning the building related to blight. The probject is currently at the data cleaning stage, and I may add some other data to the project. So far, I am using about 3GB of data.
+
+
+```{r}
+library(tidyverse)
+library(sf)
+library(ggmap)
+library(lwgeom)
+
+#recorded violations associated with blight (e.g. unkempt properties)
+blight_violations <- read_csv("./data/Blight_Violations_3_19_2018.csv", 
+                              guess_max = 10^6)
+
+#read the downloaded file for all the building permits and then filter out the permits for dismantling
+dismantle_permits <- read_csv("./data/Building_Permits_3_19_2018.csv", 
+                             guess_max = 10^6) %>%
+  filter(`Building Permit Type` == "Dismantle")
+  
+#the files that contain the crime data
+crime_to_12062016 <- 
+  read_csv("./data/DPD__All_Crime_Incidents__January_1__2009_-_December_6__2016.csv",
+           guess_max = 10^6)
+
+crime_12062016_to_03192018 <- 
+  read_csv("./data/DPD__All_Crime_Incidents__December_6__2016_-_3_19_2018.csv", 
+           guess_max = 10^6)
+
+#the 311 system
+improve_detroit_issues <- read_csv("./data/Improve_Detroit_Issues_3_19_2018.csv", 
+                                   guess_max = 10^6)
+
+#the shapefile representing Detroit parcels, read into 
+parcel_sf <- st_read("/Users/stuartbarnum/Desktop/urban blight/data/Parcel Map")
+
+#writeLines(c("parcel_sf", " ", colnames(parcel_sf)), "parcel_sf.txt")
+
+```
+
+For all of the downloaded datasets other than the parcels dataset, we extract extract the usable latutude and longitude values and then use this information to form simple features (sf) objects. Rows with bviously incorrect values, or values that would represent positions well outside Detroit, are filtered out, together with rows for which the latitude or longitude data is missing.
+
+```{r}
+
+#function for converting the position (character) column into a column of points in the simple features (sf) framework. 
+add_sf_point <- function(df, column) {
+  
+  #extract the latitude and longitude from the string column that contains both. With the parentheses
+  #located from the end of the strings, it is possible to use the the same function for all five of 
+  #the datasets for which we need to extract this information.
+  latitude <- str_sub(df[[column]], 
+                      stringi::stri_locate_last_fixed(df[[column]], "(")[,2] + 1,
+                      stringi::stri_locate_last_fixed(df[[column]], ",")[,1] - 1)
+  longitude <- str_sub(df[[column]], 
+                       stringi::stri_locate_last_fixed(df[[column]], ", ")[,2] + 1, 
+                       stringi::stri_locate_last_fixed(df[[column]], ")")[,1] - 1)
+  
+  #add the latititude and and longitude to a copy of the dataframe, filter out the NAs from
+  #these results, and then convert convert to sf, with point positions indicated in the
+  #geometry column
+  mutated <- df %>% mutate(extracted_lat = as.double(latitude),
+                      extracted_lon = as.double(longitude))
+  
+  #remove rows with NAs for latitude or longitude, or with values well outside of Detroit
+  filtered <- mutated %>%
+    filter(!is.na(extracted_lat) & !is.na(extracted_lon)) %>%
+    filter(41 < extracted_lat & extracted_lat < 44 & -85 < extracted_lon & extracted_lon < -81)
+    
+  #create a dataframe from the items that have been filtered out
+  result_coord_na <- setdiff(mutated, filtered)
+  
+  #create sf objects from the rows with usable latitude and longitude information
+  result_sf <- st_as_sf(filtered, coords = c("extracted_lon", "extracted_lat"), crs = 4326)
+    
+  return(list(result_sf, result_coord_na))
+}
+
+#apply the function to the five datasets for which the data was not loaded as a simple features dataframe, thus producing a list of two dataframes for each of the datasets, the first element of the list a simple features data frame and the second element a dataframe with the instances for which it was not possible to convert to simple features
+blight_violations_split <- add_sf_point(blight_violations, "Violation Location")
+
+dismantle_permits_split <- add_sf_point(dismantle_permits, "Permit Location")
+
+crime_to_12062016_split <- add_sf_point(crime_to_12062016, "LOCATION")
+
+crime_12062016_to_03192018_split <- add_sf_point(crime_12062016_to_03192018, "Location")
+
+improve_detroit_issues_split <- add_sf_point(improve_detroit_issues, "Location")
+
+```
+
+We now consider the data for which we do not yet have position data and complete the information as well as we reasonably can, beginning with the missing position information in the blight violations data.
+
+```{r}
+blight_vio_na <- blight_violations_split[[2]]
+
+#remove the rows for which geocoding is not likely to prodoce reliable results
+useful <- blight_vio_na %>% filter(!is.na(`Violation Street Name`), 
+                                   `Violation Street Number` > 0, 
+                                   !is.na(`Violation Zip Code`))
+
+#create a column of addresses to be used in geocoding
+useful <- useful %>% 
+  mutate(complete_address = paste(`Violation Street Number`, " ", `Violation Street Name`, ", ",
+                                  "Detroit, Michigan", " ", `Violation Zip Code`, sep = ""))
+
+#function makes a maximum 6 attempts to geocode the given address using the Google API, with a pause of 1 second between attempts. We will use the function for the other datasets as well.
+geocode_pause <- function(address) {
+  for (index in 1:6) {
+    Sys.sleep(1)
+    location <- ggmap::geocode(address)
+    if (!is.na(location$lon)) {
+      return(location)
+    }
+  }
+}
+```
+
+
+```{r, eval = FALSE}
+#apply geocode_pause to each of the elements of the complete_addresse column and place the result in a new column, in which each entry is a data frame 
+useful <- useful %>% mutate(location = map(complete_address, geocode_pause))
+
+#save to disc, to avoid avoid the need to geocode these addresses again when we rerun the analysis
+write_rds(useful, "./data/blight_violations_geocodes.rds")
+
+```
+
+The geocoding has returned a data frame for each of the addresses. We thus need to unpack the elements of the location column, each of which is a data frame.
+
+```{r}
+#read blight_violations_geocodes as a tibble
+blight_violations_geocodes <- read_rds("./data/blight_violations_geocodes.rds")
+
+#function for removing the instances for which geocoding failed (for which the value in the location column is NULLL). We will use this function for all of the geocoded data frames.
+remove_null_locations <- function(df) {
+  #identify the rows for which the value in the location column is NULL
+  null_rows <- list()
+  for (index in 1:nrow(df)) {
+    if (is.null(df$location[[index]])) {
+      null_rows <- c(null_rows, index)
+    }
+  }
+  #remove the rows for which the value of the location column is NULL
+  df <- df[-as.integer(null_rows),]
+}
+
+blight_violations_geocodes <- remove_null_locations(blight_violations_geocodes)
+
+#With blight_violations_geocodes a tibble, we can apply tidyr::unnest(), which will place the latitude and longitude in columns labelled "lat" and "lon".
+blight_violations_geocodes <- blight_violations_geocodes %>% unnest(location)
+
+#fill in the `Violation Latitute` and `Violation Longitude` data frames, which alread exist in the blight_violations data frame
+blight_violations_geocodes <- blight_violations_geocodes %>%
+  mutate(`Violation Latitude` = lat,
+         `Violation Longitude` = lon)
+
+#cut out some columns that have been added
+blight_violations_geocodes <- blight_violations_geocodes %>% 
+  select(-extracted_lat, -extracted_lon, -complete_address)
+
+#put the position information into a simple features format (which will remove the "lat" and "lon" columns)
+blight_violations_geocodes_sf <- st_as_sf(blight_violations_geocodes, 
+                                          coords = c("lon", "lat"),
+                                          crs = 4326)
+
+#combine the results with the previously generated sf data
+blight_violations_sf <- rbind(blight_violations_split[[1]], blight_violations_geocodes_sf)
+
+rm(blight_vio_na, blight_violations, blight_violations_geocodes, 
+   blight_violations_geocodes_sf, blight_violations_split, useful)
+
+```
+
+```{r}
+
+#the dismantle permits for which position data (latitude and longitude) is missing
+dismantle_permits_split_na <- dismantle_permits_split[[2]]
+
+#remove the last two columns, which were not contained in the original dismantle_permits datastet
+dismantle_permits_split_na <- dismantle_permits_split_na %>% 
+  select(-extracted_lat, -extracted_lon)
+
+```
+
+
+```{r, eval = FALSE}
+
+#geocode the items in dismantle_permits_split_na, using the address column and the function geocode_pause, which makes a maximum of six attempts for each item. The result is list of dataframes in the location column.
+dismantle_permits_split_geocode <- dismantle_permits_split_na %>%
+  mutate(location = map(str_c(`Site Address`, ", Detroit, Michigan"), geocode_pause))
+
+#write the results of the geocoding to disk, to avoid having to repeat the geocoding when rerunning the analysis.
+write_rds(dismantle_permits_split_geocode, "./data/dismantle_permits_geocodes.rds")
+
+rm(dismantle_permits_split_na)
+
+```
+
+
+```{r}
+#load the geocoded data frame into R
+dismantle_permits_split_geocode <- read_rds("./data/dismantle_permits_geocodes.rds")
+
+#use the remove_null_locations() to remove the rows for which geocoding failed and then parse the information  in the dataframes in the location column into two new columns, lat and lan
+dismantle_permits_split_geocode <- 
+  remove_null_locations(dismantle_permits_split_geocode) %>%
+  unnest(location)
+
+#convert to a simple features (sf) data frame, using the latititudes and longitudes
+dismantle_permits_geocode_sf <- st_as_sf(dismantle_permits_split_geocode, 
+                                          coords = c("lon", "lat"),
+                                          crs = 4326)
+
+#append this simple features dataframe to the dataframe for which we already had usable positions
+dismantle_permits_sf <- rbind(dismantle_permits_split[[1]], dismantle_permits_geocode_sf)
+
+rm(dismantle_permits_split_geocode, dismantle_permits_geocode_sf, dismantle_permits, dismantle_permits_split, dismantle_permits_split_na)
+
+```
+
+We now fill-in the missing position information for the dataset for crimes up to 12-06-2016
+
+```{r}
+
+#return to the older crime data
+crime_to_12062016_leftovers <- crime_to_12062016_split[[2]]
+
+#cut out the addresses that begin with "00"
+crime_to_12062016_leftovers <- crime_to_12062016_leftovers %>% 
+  filter(str_sub(LOCATION, 1, 2) != "00")
+
+#filter out some obviously useless addresses, with few characters before the first "("
+crime_to_12062016_leftovers <- crime_to_12062016_leftovers %>% 
+  filter(!str_locate(LOCATION, "\\(")[,1] %in% 1:13)
+
+#remove the two columns that were added earlier
+crime_to_12062016_leftovers <- crime_to_12062016_leftovers %>% 
+  select(-extracted_lat, -extracted_lon)
+
+#create a column for use in geocoding
+crime_to_12062016_leftovers <- crime_to_12062016_leftovers %>% 
+  mutate(extracted_address = str_c(str_sub(LOCATION, 1, 
+                                           str_locate(LOCATION, "\\(")[,1] - 2),
+                                                      ", Detroit, Michigan"))
+
+```
+
+```{r, eval = FALSE}
+
+#geocode the elements of extracted_address, using the function geocode_pause
+crime_to_12062016_leftovers_geocode <- crime_to_12062016_leftovers %>% 
+  mutate(location = map(extracted_address, geocode_pause))
+
+#save the results, to avoid having to geocode again when rerunning the analysis
+write_rds(crime_to_12062016_leftovers_geocode, "./data/crime_to_12062016_leftovers_geocode.rds")
+
+```
+
+
+
+```{r}
+
+crime_to_12062016_leftovers_geocode <- read_rds("./data/crime_to_12062016_leftovers_geocode.rds")
+
+#cut out the column we used for geocoding
+crime_to_12062016_leftovers_geocode <- 
+  crime_to_12062016_leftovers_geocode %>% select(-extracted_address)
+  
+#cut out of the geocode failures and put the location information into the columns lat and lon
+crime_to_12062016_leftovers_geocode <- 
+  remove_null_locations(crime_to_12062016_leftovers_geocode) %>%
+  unnest(location)
+
+#create a simple features (sf) object, using the latititudes and longitudes
+crime_to_12062016_leftovers_sf <- st_as_sf(crime_to_12062016_leftovers_geocode, 
+                                          coords = c("lon", "lat"),
+                                          crs = 4326)
+
+#append this simple features dataframe to the dataframe for which we already had locations
+crime_to_12062016_sf <- rbind(crime_to_12062016_split[[1]], crime_to_12062016_leftovers_sf)
+
+rm(crime_to_12062016, crime_to_12062016_leftovers_geocode, crime_to_12062016_leftovers_sf, crime_to_12062016_leftovers, crime_to_12062016_split)
+
+```
+
+
+```{r}
+register_google(key = "AIzaSyCBg40Tc3ph0-NMzlA0ZSiyFkBicUlVM48")
+```
+
+```{r}
+
+#consider the examples in the recent crime data for which the conversion to sf didn't work, remove the two columns that we have added, and create and address column for geocoding
+crime_12062016_to_03192018_leftovers <- crime_12062016_to_03192018_split[[2]] %>%
+  select(-extracted_lat, -extracted_lon) %>%
+  mutate(extracted_address = str_c(`Incident Address`, ", Detroit, Michigan"))
+
+```
+
+```{r, eval = FALSE}
+
+crime_12062016_to_03192018_geocode <- crime_12062016_to_03192018_leftovers %>% 
+  mutate(location = map(extracted_address, geocode_pause))
+
+write_rds(crime_12062016_to_03192018_geocode, "./data/crime_12062016_to_03192018_geocode.rds")
+
+```
+
+```{r}
+
+crime_12062016_to_03192018_geocode <- read_rds("./data/crime_12062016_to_03192018_geocode.rds") %>%
+  select(-extracted_address)
+
+#remove the rows for which the value of location is NULL and then unnest the remaining locations
+crime_12062016_to_03192018_geocode <- 
+  remove_null_locations(crime_12062016_to_03192018_geocode) %>%
+  unnest(location)
+
+#convert the dataframe to a simple features set
+crime_12062016_to_03192018_sf <- st_as_sf(crime_12062016_to_03192018_geocode, 
+                                          coords = c("lon", "lat"),
+                                          crs = 4326)  
+
+#combine the geocoded data with the sf dataframe created earlier
+crime_12062016_to_03192018 <- rbind(crime_12062016_to_03192018_split[[1]], crime_12062016_to_03192018_sf)
+
+rm(crime_12062016_to_03192018_split, crime_12062016_to_03192018_geocode, crime_12062016_to_03192018_leftovers, crime_12062016_to_03192018_sf)
+
+```
+
+```{r}
+
+#geocode the one item in the Improve Detroit Issues data for which the given coordinates were obviously incorrect, and then convert to an sf object. If geocoding fails, run this bit again
+improve_detroit_issues_leftover_sf <- improve_detroit_issues_split[[2]] %>%
+  select(-extracted_lat, -extracted_lon) %>%
+  mutate(location = map(Address, geocode)) %>%
+  unnest(location) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)  
+
+#splice with the previously generated sf dataframe
+improve_detroit_issues <- rbind(improve_detroit_issues_split[[1]], improve_detroit_issues_leftover_sf)
+
+rm(improve_detroit_issues_split, improve_detroit_issues_leftover, improve_detroit_issues_leftover_sf)
+
+```
+
+We begin the assignment of labels to the buidings: blighted or not blighted. Buildings will be represented by parcels that have or have had buildings on them, whether by being so represented as in the `parcels_sf` data frame as including structures or in the dismantle permits dataframe as having had a dismante permit associated with it, thus suggested that there *was* a building on the parcel. 
+
+We will use parcel numbers to refer to the parcels. This works because parcelnum column contains no repeats over different rows. the parcelnum column in parcel_sf has no duplicates (see below, in which `duplicate_parcel_numbers_in_parcel_data` has zero rows). 
+
+```{r}
+#As per above, following returns an empty data frame
+duplicate_parcel_numbers_in_parcel_data <- 
+  parcel_sf %>%
+  group_by(parcelnum) %>% 
+  mutate(n = n()) %>%
+  ungroup() %>% 
+  filter(n > 1)
+duplicate_parcel_numbers_in_parcel_data
+rm(duplicate_parcel_numbers_in_parcel_data)
+```
+The dismantle permits data, however, may seem to be less clean than parcel_sf, as it contains repetitions of the parcel numbers that correspond to different addresses that would refer, in some cases, to distanct locations. (It also indicates that a few individual locatations, identified with addresses, had more than one associated dismantle permit. This need not be problematic---a permit could expire before the work is carried out, or there could be more than one structure on a parcel.)  These repetitions are in `duplicate_parcel_numbers_over_distinct_addresses`, which contains 260 rows. I should also note that, in  most of these cases with duplicate parcel numbers (and addresses indicating different locations), the recorded latitude and longitude are identical. We can thus infer that some of this location information is incorrect.
+```{r}
+dup_par_num_in_dismantle_data <-
+  dismantle_permits_sf %>%
+  group_by(`Parcel Number`) %>% 
+  mutate(n = n()) %>%
+  ungroup() %>% 
+  filter(n > 1) %>%
+  select(`Parcel Number`, `Site Address`)
+as.data.frame(dup_par_num_in_dismantle_data)
+rm(dup_par_num_in_dismantle_data)
+
+#parcel numbers in the dismantle permits data that are distributed over disinct addresseses
+dup_par_num_over_distinct_addresses <- 
+  dismantle_permits_sf %>%
+  group_by(`Parcel Number`) %>%
+  mutate(parcel_number_occurances = n()) %>%
+  ungroup() %>%
+  filter(parcel_number_occurances > 1) %>%
+  select(`Parcel Number`, `Site Address`, parcel_number_occurances) %>%
+  group_by(`Parcel Number`, `Site Address`) %>%
+  mutate(m = n()) %>%
+  filter(m < parcel_number_occurances) %>%
+  arrange(`Parcel Number`)
+as.data.frame(dup_par_num_over_distinct_addresses)
+rm(dup_par_num_over_distinct_addresses)
+
+```
+Some of repeats of the parcel numbers would seem to correspond to the some location (with the addresses recorded somewhat differently), while others would not. The numbers rows in question is relatively small (272), so I will ignore the issue for now. (I will eventually either remove this data are attempt to attache the correct location information.)
+
+```{r}
+#note that the following removes rows with duplicate parcels
+#duplicate_parcel_numbers %>% distinct(parcelnum, .keep_all = TRUE)
+
+parcel_join_sf_parcel_first <- 
+  full_join(parcel_sf %>% select(parcelnum),
+            dismantle_permits_sf %>% as.data.frame() %>% select(`Parcel Number`),
+            c("parcelnum" = "Parcel Number")) %>%
+  arrange(`Parcel Number`)
+
+parcel_join_sf_dismantle_first <-
+  full_join(dismantle_permits_sf %>% select(`Parcel Number`), 
+            parcel_sf %>% as.data.frame() %>% select(parcelnum),
+            c("Parcel Number" = "parcelnum")) %>%
+  arrange(`Parcel Number`)
+
+st_crs(parcel_sf)
+st_crs(dismantle_permits_sf)
+
+#Both of these yield an EPSG of 4326. Nethereless, the follow step seems necessary.
+
+st_crs(dismantle_permits_sf) <- st_crs(parcel_sf)
+
+temp <- st_join(dismantle_permits_sf, parcel_sf, join = st_within)
+  
+temp2 <- temp %>% filter(`Parcel Number` != parcelnum)
+
+temp2 <- temp2 %>% select(`Parcel Number`, parcelnum, `Site Address`, address)
+
+
+#note that objectid in parcel_sf has no NA values, and that objectid is a key in parcel_sf
+parcel_sf %>% as.data.frame() %>% filter(is.na(objectid))
+parcel_sf %>% count(objectid) %>% filter(n > 1)
+
+#note that `Permit Number` is a also a key, for dismantle_permits_sf
+dismantle_permits_sf %>% as.data.frame() %>% filter(is.na(`Permit Number`))
+dismantle_permits_sf %>% count(`Permit Number`) %>% filter(n > 1)
+
+#with the above in mind, we examine the NA values for these columns in our full join, beginning with objectid in parcel_sf. The idea is that any NA value for objectid in parcel_join would correspond to a parcel in the dismantle permits dataset that is either not reflected in the parcels dataset or for which there is a flaw in the data.
+parcel_join %>% filter(is.na(objectid))
+
+dismantle_permits_sf %>% filter(`Parcel Number` == "22108512.")
+
+#dismantled_structures <- initial_join %>% filter(!is.na(`Permit Number`))
+
+parcel_sf %>% filter(parcelnum == "22108512.")
+
+parcel_tmp <- blight_violations_sf[c(1, 2),]
+
+st_distance(parcel_tmp)
+
+m_list <- mapply(st_distance, blight_violations_sf$geometry[1], fred$geometry)
+
+dismantle_permits_sf %>% as.data.frame() %>% filter(is.na(`Parcel Number`))
+
+temp4 <- st_distance(parcel_sf[195099,], 
+            blight_violations_sf[22233:22255,])
+
+st_crs(blight_violations_sf) <- st_crs(parcel_sf)
+
+plot(blight_violations_sf, max.plot = 1)
+
+```
+
+Maps:
+
+```{r, eval = FALSE}
+library(ggmap)
+
+ggplot(blight_violations_sf %>% select(geometry)) +
+  geom_sf() + 
+  geom_density2d(data = blight_violations_sf %>% select(geometry))
+
+
+ggplot(data=xy.sf) +
+    geom_sf() +
+    geom_density2d(data=xy.sf, aes(x=x,y=y,colour=..level..))
+
+
+seattle_gg <- get_map("Detroit", maptype = "toner-lite",
+                      zoom = 11)
+
+ggmap(seattle_gg)
+```
+
+
+
+
+
+
