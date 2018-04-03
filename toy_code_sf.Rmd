@@ -116,6 +116,13 @@ detroit_gg <- get_stamenmap(bbox = c(left=-83.5, bottom=42.22, right=-82.86, top
 #left/bottom/right/top
 
 ggmap(detroit_gg) + plot_point_sf(dismantle_permits_sf)
+
+df <- tibble(x = c(1,2,3,3,4,4), y = 1:6)
+df %>% filter(x %in% duplicated(df$x))
+
+
+df %>% filter(!duplicated(df$x))
+
 ```
 
 

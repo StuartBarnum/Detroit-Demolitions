@@ -347,53 +347,128 @@ We begin the assignment of labels to the buidings: blighted or not blighted. Bui
 
 We will use parcel numbers to refer to the parcels. However, as the following bit of code shows, the parcels dataset contains a few rows in which the parcel humbers are the same (`duplicate_parcel_numbers_in_parcel_data` contains 78 rows). 
 
-```{r}
+```{r, warning = FALSE}
 #As per above, following returns an empty data frame
 duplicate_parcel_numbers_in_parcel_data <- 
   parcel_sf %>%
   group_by(parcelnum) %>% 
   mutate(n = n()) %>%
   ungroup() %>% 
-  filter(n > 1)
+  filter(n > 1) %>%
+  select(parcelnum, address, legaldesc)
 duplicate_parcel_numbers_in_parcel_data
 rm(duplicate_parcel_numbers_in_parcel_data)
 ```
+
+With the exception of perhaps one pair of entries in the above, all of the entries with duplicate parcel numbers are for buildings with multiples units, such as apparentment buildings. I can safely select one of the rows, and it does not seem to matter which row with select.
+
+```{r, warning = FALSE}
+
+parcel_sf <- parcel_sf %>% 
+  filter(!duplicated(parcel_sf$parcelnum))
+
+```
+
 The dismantle permits data also contains some duplicate parcel numbers over rows, in some cases over rows that contain address information suggesting that the location is different. (It also indicates that a few individual locatations, identified with addresses, had more than one associated dismantle permit. This need not be problematic---a permit could expire before the work is carried out, or there could be more than one structure on a parcel.)  These repetitions are in `duplicate_parcel_numbers_over_distinct_addresses`, which contains 260 rows. I should also note that, in  most of these cases with duplicate parcel numbers (and addresses indicating different locations), the recorded latitude and longitude are identical. We can thus infer that some of this location information is incorrect.
-```{r}
+```{r, warning = FALSE}
+
+#repeated parcel numbers in the dismantle permits data
 dup_par_num_in_dismantle_data <-
   dismantle_permits_sf %>%
   group_by(`Parcel Number`) %>% 
   mutate(n = n()) %>%
   ungroup() %>% 
   filter(n > 1) %>%
-  select(`Parcel Number`, `Site Address`)
-as.data.frame(dup_par_num_in_dismantle_data)
+  select(`Parcel Number`, `Site Address`) %>%
+  arrange(`Parcel Number`)
 rm(dup_par_num_in_dismantle_data)
 
-#parcel numbers in the dismantle permits data that are distributed over disinct addresseses
+#parcel numbers in the dismantle permits data that are distributed over disinct address strings
 dup_par_num_over_distinct_addresses <- 
   dismantle_permits_sf %>%
   group_by(`Parcel Number`) %>%
   mutate(parcel_number_occurances = n()) %>%
   ungroup() %>%
   filter(parcel_number_occurances > 1) %>%
-  select(`Parcel Number`, `Site Address`, parcel_number_occurances) %>%
   group_by(`Parcel Number`, `Site Address`) %>%
   mutate(m = n()) %>%
   filter(m < parcel_number_occurances) %>%
   arrange(`Parcel Number`)
-as.data.frame(dup_par_num_over_distinct_addresses)
-rm(dup_par_num_over_distinct_addresses)
+
+#view selected portions of dup_par_num_over_distinct_addresses
+as.data.frame(dup_par_num_over_distinct_addresses) %>%
+  select(`Parcel Number`, `Site Address`, parcel_number_occurances, m)
 
 ```
-Some of repeats of the parcel numbers would seem to correspond to the some location (with the addresses recorded somewhat differently), while others would not. The number of rows in question is relatively small (272), so I will ignore the issue for now. (I will eventually either remove this data are attempt to attache the correct location information.)
 
 ```{r, eval = FALSE}
-#note that the following removes rows with duplicate parcels
-#duplicate_parcel_numbers %>% distinct(parcelnum, .keep_all = TRUE)
+
+#remove extraneous variables and then geocode the dismantle site addresses
+geocoded_duplicates <- dup_par_num_over_distinct_addresses %>%
+  as.data.frame %>%
+  select(-parcel_number_occurances, -m, -geometry) %>%
+  mutate(location = map(str_c(`Site Address`, ", Detroit, Michigan"), geocode_pause))
+  
+#avoid having to do the geocoding again when re-running the code
+write_rds(geocoded_duplicates, "./data/geocoded_duplicates.rds")  
+
+```
+
+```{r}
+
+dismantle_duplicates_geocoded <- read_rds("./data/geocoded_duplicates.rds")
+
+#unpack the column of data frames (the geocode information)
+dismantle_duplicates_geocoded <- remove_null_locations(dismantle_duplicates_geocoded) %>%
+   unnest(location)
+
+#note the 16 rows of dismantle_duplicates_geocoded for which another row lists the same longitude and latitude
+dismantle_duplicates_geocoded %>% 
+  group_by(lon, lat) %>% mutate(n = n()) %>% filter(n > 1)
+  
+#keep only the first of any group of rows with the same longitude and latitude
+dismantle_duplicates_geocoded <- dismantle_duplicates_geocoded %>% 
+  filter(!duplicated(dismantle_duplicates_geocoded$lon) &
+            !duplicated(dismantle_duplicates_geocoded$lat))
+
+#note that the we could have used ".keep_all = TRUE" with distinct()
+
+#manually cut out the one remaining apparent duplicate location
+dismantle_duplicates_geocoded <- dismantle_duplicates_geocoded %>% 
+  filter(!(`Site Address` == "3200 E LAFAYETTE-MARTIN LUTHER KING HIGH"))
+
+#alter the duplicated parcels numbers to make them unique
+dismantle_duplicates_geocoded <- dismantle_duplicates_geocoded %>% 
+  mutate(`Parcel Number` = str_c(`Parcel Number`, "_", row_number()))
+
+#create simple features objects
+dismantle_duplicates_geocoded <- dismantle_duplicates_geocoded %>%
+  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+
+#remove from dismantle_permits_sf all of the rows with repeated parcel numbers and then
+#replace then, when possible, replace them with geocoded rows
+dismantle_permits_sf <- dismantle_permits_sf %>% 
+  filter(!(`Parcel Number` %in% dup_par_num_over_distinct_addresses$`Parcel Number`)) %>%
+  rbind(dismantle_duplicates_geocoded)
+
+rm(dismantle_duplicates_geocoded, dup_par_num_over_distinct_addresses)
+
+```
+
+We now begin the process of creating a set of labels over the buildings. The first step will be to create a dataframe in which each row is a "building"---the set parcels (elements of `parcel_sf`) such that each either (1) has a building on it, as indicated in `parcel_sf`, or (2) a dismantle permit for the same location as the parcel. I will begin with the identification of the buildings.
+
+```{r}
+buildings <- parcel_sf #%>% 
+
+typeof(parcel_sf$parcelnum)
+typeof(dismantle_permits_sf$`Parcel Number`)
+```
+
+
+```{r, eval = FALSE}
 
 parcel_join_sf_parcel_first <- 
-  full_join(parcel_sf %>% select(parcelnum),
+  full_join(parcel_sf %>% select(parcelnum) %>% mutate(parcelnum = as.character((parcelnum))),
             dismantle_permits_sf %>% as.data.frame() %>% select(`Parcel Number`),
             c("parcelnum" = "Parcel Number")) %>%
   arrange(`Parcel Number`)
