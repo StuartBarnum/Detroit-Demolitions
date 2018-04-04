@@ -468,10 +468,10 @@ typeof(dismantle_permits_sf$`Parcel Number`)
 ```{r, eval = FALSE}
 
 parcel_join_sf_parcel_first <- 
-  full_join(parcel_sf %>% select(parcelnum) %>% mutate(parcelnum = as.character((parcelnum))),
+  inner_join(parcel_sf %>% select(parcelnum) %>% mutate(parcelnum = as.character((parcelnum))),
             dismantle_permits_sf %>% as.data.frame() %>% select(`Parcel Number`),
             c("parcelnum" = "Parcel Number")) %>%
-  arrange(`Parcel Number`)
+  arrange(parcelnum)
 
 parcel_join_sf_dismantle_first <-
   full_join(dismantle_permits_sf %>% select(`Parcel Number`), 
@@ -487,6 +487,8 @@ st_crs(dismantle_permits_sf)
 st_crs(dismantle_permits_sf) <- st_crs(parcel_sf)
 
 temp <- st_join(dismantle_permits_sf, parcel_sf, join = st_within)
+
+temp2 <- inner_join(temp, as.data.frame(parcel_join_sf_parcel_first), by = "parcelnum")
   
 temp2 <- temp %>% filter(`Parcel Number` != parcelnum)
 
