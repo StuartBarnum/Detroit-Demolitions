@@ -414,7 +414,7 @@ write_rds(geocoded_duplicates, "./data/geocoded_duplicates.rds")
 
 ```
 
-Having identifies some potentially problematic data points, I we need to investigate a few of them. As in the following example.
+Having identified some potentially problematic data points, we need to investigate a few of them. As in the following example.
 
 ```{r}
 
@@ -450,12 +450,12 @@ sf_points_map(temp4)
 parcel_sf %>% filter(parcelnum == as.integer("13006809."))
 
 #try a spacial join to see where these points in the dismantled dataset hook up with the parcels dataset
-
 temp5 <- st_join(parcel_sf, temp4, left = FALSE, st_contains)
 temp5$`Parcel Number`
 #three rows, all with `Parcel Number` = "13006809."
 
-plot
+plot(temp5[1,]$geometry)
+
 ```
 
 ```{r}
