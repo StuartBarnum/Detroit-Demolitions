@@ -454,8 +454,6 @@ temp5 <- st_join(parcel_sf, temp4, left = FALSE, st_contains)
 temp5$`Parcel Number`
 #three rows, all with `Parcel Number` = "13006809."
 
-plot(temp5[1,]$geometry)
-
 sf_points_map(temp4) +  
   geom_sf(data = temp5[1,] %>% select(geometry), crs = 3857, inherit.aes = FALSE)
 
