@@ -454,16 +454,23 @@ temp5 <- st_join(parcel_sf, temp4, left = FALSE, st_contains)
 temp5$`Parcel Number`
 #three rows, all with `Parcel Number` = "13006809."
 
+#plot with crs = 3857 to match google maps
 sf_points_map(temp4) +  
   geom_sf(data = temp5[1,] %>% select(geometry), crs = 3857, inherit.aes = FALSE)
 
+rm(temp1, temp2, temp3, temp4, temp5)
 ```
 
+We thus see that at least some of the parcel contain multiple structures. It is also notable that some of the positions associated with the dismantle permits, particularly those in the streets, are far enough from the the parcel to potentially be closer to other parcels. In particular, investigation of the surrounding area with google earth suggests that the point in temp4 that is the furthest south is quite close to a dismntled building that is well-outside of the parcel.
+
+We resume the development our our model.
 
 ```{r}
+
+#read in the saved set of examples that involve repeats of parcel numbers over different addresses.
 dismantle_duplicates_geocoded <- read_rds("./data/geocoded_duplicates.rds")
 
-#unpack the column of data frames (the geocode information)
+#unpack the column of data frames (the outputs of geocode())
 dismantle_duplicates_geocoded <- remove_null_locations(dismantle_duplicates_geocoded) %>%
    unnest(location)
 
@@ -476,7 +483,9 @@ dismantle_duplicates_geocoded <-
   dismantle_duplicates_geocoded %>% distinct(lon, lat, .keep_all = TRUE)
 ```
 
-Using Google Street View to investigate a few of the dismantle permit entries for which there are other entries with the same parcel number but different addresses, suggests that most of these repeats are for addresses that share a building, or at least for are attached.
+Using Google Street View to investigate some more dismantle permit entries for which there are other entries with the same parcel number but different addresses, we find mostly different locations at the same buidling (e.g. the two sides of a duplex), or perhaps two attached buildings. 
+
+Continuing our construction:
 
 ```{r, eval = FALSE}
   
