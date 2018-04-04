@@ -456,6 +456,9 @@ temp5$`Parcel Number`
 
 plot(temp5[1,]$geometry)
 
+ggplot(temp5[1,] %>% select(geometry)) + geom_sf()
+
+
 ```
 
 ```{r}
