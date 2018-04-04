@@ -414,8 +414,51 @@ write_rds(geocoded_duplicates, "./data/geocoded_duplicates.rds")
 
 ```
 
+Having identifies some potentially problematic data points, I we need to investigate a few of them. As in the following example.
+
 ```{r}
 
+temp1 <- read_rds("./data/geocoded_duplicates.rds")
+
+#Isolate some variables for viewing
+temp2 <- temp1 %>% select(`Parcel Number`, location, `Permit Location`)
+
+#eleven seeminly separate locations with the same listed parcel number
+temp3 <- temp1 %>% filter(`Parcel Number` == "13006809.")
+
+#put into an sf form
+temp4 <- st_as_sf(unnest(temp3), coords = c("lon", "lat"), crs = st_crs(parcel_sf))
+
+#function for putting a set of of sf point on a satelite map
+sf_points_map <- function(sf_df) {
+  df <- sf_df %>% mutate(longitude = st_coordinates(sf_df)[,1],
+                                latitude = st_coordinates(sf_df)[,2]) %>%
+  as.data.frame %>% select(longitude, latitude)
+  
+  #left/bottom/right/top for bounding box
+  bounding_box <- c(min(df$longitude) - 0.002, min(df$latitude) - 0.002, 
+                    max(df$longitude) + 0.002, max(df$latitude) + 0.002)
+  detroit_gg <- get_map(location = bounding_box, 
+                        maptype = "satellite")
+  ggmap(detroit_gg) + geom_point(data = df, aes(x = longitude, y = latitude)) 
+}
+
+#map of points with Parcel Number listed as "13006809."
+sf_points_map(temp4)
+
+#It is also notable that "13006809." is not reflected as a parcel number in parcel_sf (noting that parcel_sf$parcelnum is an integer vector)
+parcel_sf %>% filter(parcelnum == as.integer("13006809."))
+
+#try a spacial join to see where these points in the dismantled dataset hook up with the parcels dataset
+
+temp5 <- st_join(parcel_sf, temp4, left = FALSE, st_contains)
+temp5$`Parcel Number`
+#three rows, all with `Parcel Number` = "13006809."
+
+plot
+```
+
+```{r}
 dismantle_duplicates_geocoded <- read_rds("./data/geocoded_duplicates.rds")
 
 #unpack the column of data frames (the geocode information)
@@ -427,26 +470,42 @@ dismantle_duplicates_geocoded %>%
   group_by(lon, lat) %>% mutate(n = n()) %>% filter(n > 1)
   
 #keep only the first of any group of rows with the same longitude and latitude
-dismantle_duplicates_geocoded <- dismantle_duplicates_geocoded %>% 
-  filter(!duplicated(dismantle_duplicates_geocoded$lon) &
-            !duplicated(dismantle_duplicates_geocoded$lat))
+dismantle_duplicates_geocoded <-
+  dismantle_duplicates_geocoded %>% distinct(lon, lat, .keep_all = TRUE)
+```
 
-#note that the we could have used ".keep_all = TRUE" with distinct()
+Using Google Street View to investigate a few of the dismantle permit entries for which there are other entries with the same parcel number but different addresses, suggests that most of these repeats are for addresses that share a building, or at least for are attached.
 
+```{r, eval = FALSE}
+  
 #manually cut out the one remaining apparent duplicate location
 dismantle_duplicates_geocoded <- dismantle_duplicates_geocoded %>% 
   filter(!(`Site Address` == "3200 E LAFAYETTE-MARTIN LUTHER KING HIGH"))
 
-#alter the duplicated parcels numbers to make them unique
-dismantle_duplicates_geocoded <- dismantle_duplicates_geocoded %>% 
-  mutate(`Parcel Number` = str_c(`Parcel Number`, "_", row_number()))
-
-#create simple features objects
 dismantle_duplicates_geocoded <- dismantle_duplicates_geocoded %>%
   st_as_sf(coords = c("lon", "lat"), crs = 4326)
 
+#It is odd that this step is necessary, given that CRSs of the two data frames appear to be the same
+st_crs(dismantle_duplicates_geocoded) <- st_crs(parcel_sf)
+
+#where possible, find the parcels that contain the positions corresponding to the coordinates
+spacial_join_within <- 
+  st_join(dismantle_duplicates_geocoded, 
+          parcel_sf %>% select(parcelnum), 
+          st_within)
+
+#change the parcel numbers (for the dismantle permits data) to those for the parcels that contain the parcels specified by the coordinates. remove the parcelnum column (from the parcel_sf data frame)
+dismantle_duplicates_geocoded <- spacial_join_within %>%
+  mutate(`Parcel Number` = ifelse(!is.na(parcelnum),
+                                  as.character(parcelnum),
+                                  `Parcel Number`)) %>%
+  select(-parcelnum)
+
 #remove from dismantle_permits_sf all of the rows with repeated parcel numbers and then
-#replace then, when possible, replace them with geocoded rows
+#replace then, when possible, with geocoded rows. first make the CRSs consistent (with the observation, again, that they would appear to already be the so).
+st_crs(dismantle_duplicates_geocoded) <- st_crs(dismantle_permits_sf)
+
+#PERHAPS CHANGE THIS...
 dismantle_permits_sf <- dismantle_permits_sf %>% 
   filter(!(`Parcel Number` %in% dup_par_num_over_distinct_addresses$`Parcel Number`)) %>%
   rbind(dismantle_duplicates_geocoded)
@@ -457,7 +516,7 @@ rm(dismantle_duplicates_geocoded, dup_par_num_over_distinct_addresses)
 
 We now begin the process of creating a set of labels over the buildings. The first step will be to create a dataframe in which each row is a "building"---the set parcels (elements of `parcel_sf`) such that each either (1) has a building on it, as indicated in `parcel_sf`, or (2) a dismantle permit for the same location as the parcel. I will begin with the identification of the buildings.
 
-```{r}
+```{r, eval = FALSE}
 buildings <- parcel_sf #%>% 
 
 typeof(parcel_sf$parcelnum)
@@ -541,6 +600,10 @@ ggplot(blight_violations_sf %>% select(geometry)) +
 
 detroit_gg <- get_map("Detroit", maptype = "toner-lite",
                       zoom = 11)
+
+temp <- get_map()
+
+ggmap(temp)
 
 ggmap(detroit_gg)
 ```
