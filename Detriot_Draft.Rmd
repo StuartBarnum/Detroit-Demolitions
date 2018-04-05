@@ -3,7 +3,7 @@ title: "Blight Predictions for Detroit"
 output: html_notebook
 ---
 
-In this project, I will attempt to predict whether, for any given parcel in Detroit with a building on it, whether a building on that parcel will be be targetted for demoltion. Potential predictors include citations relatated to the building, crime, and complaints concerning the building related to blight. The probject is currently at the data cleaning stage, and I may add some other data to the project. So far, I am using about 3GB of data, downloaded from `https://data.detroitmi.gov/`.
+In this project, I will attempt to predict whether, for any given parcel in Detroit with a building on it, whether a building on that parcel will be be targetted for demoltion. Potential predictors include citations relatated to the building, crime, and complaints concerning the building related to blight. The probject is currently at the data cleaning stage, and I may add some other data to the project. So far I am using about 3GB of data downloaded from `https://data.detroitmi.gov/`.
 
 
 ```{r, message = FALSE, warning = FALSE, results = FALSE}
@@ -34,12 +34,18 @@ crime_12062016_to_03192018 <-
 improve_detroit_issues <- read_csv("./data/Improve_Detroit_Issues_3_19_2018.csv", 
                                    guess_max = 10^6)
 
+#another file with demolition information downloaded 4/4/2017
+completed_demolitions <- read_csv("./data/Detroit_Demolitions.csv",
+                                  guess_max = 10^6)
+
+completed_demolitions %>%filter(is.na(Location))
+
 #the shapefile representing Detroit parcels, read into 
 parcel_sf <- st_read("./data/Parcel Map")
 
 ```
 
-For all of the downloaded datasets other than the parcels dataset, we extract extract the usable latutude and longitude values and then use this information to form simple features (sf) objects. Rows with obviously incorrect values, or values that would represent positions well outside Detroit, are filtered out, together with rows for which the latitude or longitude data is missing.
+For all of the downloaded datasets other than the parcels dataset, we extract the usable latutude and longitude values and then use this information to form simple features (sf) objects. Rows with obviously incorrect values, or values that would represent positions well outside Detroit, are filtered out, together with rows for which the latitude or longitude data is missing.
 
 ```{r}
 
@@ -86,6 +92,8 @@ crime_to_12062016_split <- add_sf_point(crime_to_12062016, "LOCATION")
 crime_12062016_to_03192018_split <- add_sf_point(crime_12062016_to_03192018, "Location")
 
 improve_detroit_issues_split <- add_sf_point(improve_detroit_issues, "Location")
+
+completed_demolitions_split <- add_sf_point(completed_demolitions, "Location")
 
 ```
 
@@ -343,12 +351,21 @@ rm(improve_detroit_issues_split, improve_detroit_issues_leftover_sf)
 
 ```
 
+```{r}
+
+#create the other set of demolition information
+completed_demolitions_sf <- completed_demolitions_split[[1]]
+
+#note that location information in this dataset is complete
+completed_demolitions_split[[2]]
+
+```
 We begin the assignment of labels to the buidings: blighted or not blighted. Buildings will be represented by parcels that have or have had buildings on them, whether by being so represented as in the `parcels_sf` data frame as including structures or in the dismantle permits dataframe as having had a dismante permit associated with it, thus suggesting that there *was* a building on the parcel. 
 
 We will use parcel numbers to refer to the parcels. However, as the following bit of code shows, the parcels dataset contains a few rows in which the parcel humbers are the same (`duplicate_parcel_numbers_in_parcel_data` contains 78 rows). 
 
 ```{r, warning = FALSE}
-#As per above, following returns an empty data frame
+#As per above, following returns a 78-row data frame
 duplicate_parcel_numbers_in_parcel_data <- 
   parcel_sf %>%
   group_by(parcelnum) %>% 
@@ -357,7 +374,31 @@ duplicate_parcel_numbers_in_parcel_data <-
   filter(n > 1) %>%
   select(parcelnum, address, legaldesc)
 duplicate_parcel_numbers_in_parcel_data
-rm(duplicate_parcel_numbers_in_parcel_data)
+
+```
+
+Plotting the parcel data shows that, within groups of parcels that have the same parcel number, some of the pacrcels are geometrically identical while others are disjoint. We thus a apply a spatial join, using `sf::st_join`, to find, among each of these groups of parcels, the parcels with different parcel numbers but which are geometrically the same.
+
+```{r}
+
+#add row numbers to the set of rows for which there are other rows with the same parcel number
+dup_with_row_numbers <- duplicate_parcel_numbers_in_parcel_data %>% mutate(row = row_number())
+
+#join the result with itself, on the basis of sameness of identity of spatial identity 
+spatial_repeats <- st_join(dup_with_row_numbers, dup_with_row_numbers, 
+                           st_equals, left = FALSE) %>% filter(row.x != row.y) %>%
+  mutate(row_num = row_number())
+
+#find a set of the parcels, none of which covers the same area as the any of the others, that convers all of these parcels with spatial repeats.
+output <- 1:nrow(spatial_repeats)
+for (index in 1:nrow(spatial_repeats)) {
+  output[index] <- !(spatial_repeats$row.x[index] %in% spatial_repeats$row.y[1:index]) 
+}
+output <- as.logical(output)
+unique_parcels <- spatial_repeats[as.logical(output),]
+unique_parcels
+
+rm(duplicate_parcel_numbers_in_parcel_data, output)
 ```
 
 With the exception of perhaps one pair of entries in the above, all of the entries with duplicate parcel numbers are for buildings with multiples units, such as apparentment buildings. I can safely select one of the rows, and it does not seem to matter which row with select.
