@@ -38,8 +38,6 @@ improve_detroit_issues <- read_csv("./data/Improve_Detroit_Issues_3_19_2018.csv"
 completed_demolitions <- read_csv("./data/Detroit_Demolitions.csv",
                                   guess_max = 10^6)
 
-completed_demolitions %>%filter(is.na(Location))
-
 #the shapefile representing Detroit parcels, read into 
 parcel_sf <- st_read("./data/Parcel Map")
 
