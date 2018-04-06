@@ -41,6 +41,9 @@ completed_demolitions <- read_csv("./data/Detroit_Demolitions.csv",
 #the shapefile representing Detroit parcels, read into 
 parcel_sf <- st_read("./data/Parcel Map")
 
+#convert the parcel number column to a character vector, to match `Parcel Number` in the dismantle permits data
+parcel_sf <- parcel_sf %>% mutate(parcelnum = as.character(parcelnum))
+
 ```
 
 For all of the downloaded datasets other than the parcels dataset, we extract the usable latutude and longitude values and then use this information to form simple features (sf) objects. Rows with obviously incorrect values, or values that would represent positions well outside Detroit, are filtered out, together with rows for which the latitude or longitude data is missing.
@@ -363,6 +366,10 @@ We begin the assignment of labels to the buidings: blighted or not blighted. Bui
 We will use parcel numbers to refer to the parcels. However, as the following bit of code shows, the parcels dataset contains a few rows in which the parcel humbers are the same (`duplicate_parcel_numbers_in_parcel_data` contains 78 rows). 
 
 ```{r, warning = FALSE}
+
+parcel_sf <- parcel_sf %>%
+  mutate(row_num = row_number())
+
 #As per above, following returns a 78-row data frame
 duplicate_parcel_numbers_in_parcel_data <- 
   parcel_sf %>%
@@ -370,7 +377,7 @@ duplicate_parcel_numbers_in_parcel_data <-
   mutate(n = n()) %>%
   ungroup() %>% 
   filter(n > 1) %>%
-  select(parcelnum, address, legaldesc)
+  select(parcelnum, address, legaldesc, row_num)
 duplicate_parcel_numbers_in_parcel_data
 
 ```
@@ -379,32 +386,53 @@ Plotting the parcel data shows that, within groups of parcels that have the same
 
 ```{r}
 
-#add row numbers to the set of rows for which there are other rows with the same parcel number
-dup_with_row_numbers <- duplicate_parcel_numbers_in_parcel_data %>% mutate(row = row_number())
-
 #join the result with itself, on the basis of sameness of identity of spatial identity 
-spatial_repeats <- st_join(dup_with_row_numbers, dup_with_row_numbers, 
-                           st_equals, left = FALSE) %>% filter(row.x != row.y) %>%
-  mutate(row_num = row_number())
+spatial_repeats <- st_join(duplicate_parcel_numbers_in_parcel_data,
+                           duplicate_parcel_numbers_in_parcel_data, 
+                           st_equals, left = FALSE) %>% filter(row_num.x != row_num.y)
 
-#find a set of the parcels, none of which covers the same area as the any of the others, that convers all of these parcels with spatial repeats.
-output <- 1:nrow(spatial_repeats)
+#select one element from each group with the sf objects for which the polygon covers the same area
+selection_vector <- 1:nrow(spatial_repeats)
 for (index in 1:nrow(spatial_repeats)) {
-  output[index] <- !(spatial_repeats$row.x[index] %in% spatial_repeats$row.y[1:index]) 
+  selection_vector[index] <- !(spatial_repeats$row_num.x[index] %in% spatial_repeats$row_num.y[1:index]) 
 }
-output <- as.logical(output)
-unique_parcels <- spatial_repeats[as.logical(output),]
-unique_parcels
+selection_vector <- as.logical(selection_vector)
 
-rm(duplicate_parcel_numbers_in_parcel_data, output)
-```
+#the unique parcels, as described in unique_parcels
+unique_parcels <- spatial_repeats[selection_vector,]
 
-With the exception of perhaps one pair of entries in the above, all of the entries with duplicate parcel numbers are for buildings with multiples units, such as apparentment buildings. I can safely select one of the rows, and it does not seem to matter which row with select.
+#the unique parcels, as described in parcel_sf, with a row number added to the end of the parcel number (character vector)
+unique_parcels <- parcel_sf %>% filter(row_num %in% unique_parcels$row_num.x) %>%
+  mutate(parcelnum = str_c(parcelnum, "_", row_number()))
 
-```{r, warning = FALSE}
+#cut out the set of sf objects that have spatial repeats  
+parcel_sf <- parcel_sf %>% filter(!(row_num %in% spatial_repeats$row_num.x))
 
-parcel_sf <- parcel_sf %>% 
-  filter(!duplicated(parcel_sf$parcelnum))
+#bind the the set of unique spatial objects to parcel_sf
+parcel_sf <- parcel_sf %>% rbind(unique_parcels)
+
+#check for overlap of the parcels in parcel_sf
+spatial_repeats <- st_join(parcel_sf, parcel_sf, 
+        st_overlaps, left = FALSE) %>% filter(row_num.x != row_num.y)
+
+#create vectors or row numbers in parcel_sf whose corresponding elements specify objects in parcel_sf with overlapping geometries.
+x_rows <- spatial_repeats$row_num.x
+y_rows <- spatial_repeats$row_num.y
+
+#examine a random selection of these cases
+set.seed(55); sample <- sample(1:nrow(spatial_repeats), 20)
+parcel_selection <- spatial_repeats[sample,] %>% select(row_num.x, row_num.y)
+
+plots <- map(1:20, function(index){
+  row_1 <- (parcel_sf %>% select(parcelnum))[parcel_selection$row_num.x[index],]
+  row_2 <- (parcel_sf %>% select(parcelnum))[parcel_selection$row_num.y[index],]
+  plot(rbind(row_1, row_2))
+})
+
+#remove the row_num variable from pracel_sf
+parcel_sf <- parcel_sf %>% select(-row_num)
+
+rm(duplicate_parcel_numbers_in_parcel_data, selection_vector, unique_parcels)
 
 ```
 
@@ -500,7 +528,7 @@ sf_points_map(temp4) +
 rm(temp1, temp2, temp3, temp4, temp5)
 ```
 
-We thus see that at least some of the parcel contain multiple structures. It is also notable that some of the positions associated with the dismantle permits, particularly those in the streets, are far enough from the the parcel to potentially be closer to other parcels. In particular, investigation of the surrounding area with google earth suggests that the point in temp4 that is the furthest south is quite close to a dismntled building that is well-outside of the parcel.
+We thus see that at least some of the parcels contain multiple structures. It is also notable that some of the positions associated with the dismantle permits, particularly those in the streets, are far enough from the the parcel to potentially be closer to other parcels. In particular, investigation of the surrounding area with google earth suggests that the point in temp4 that is the furthest south is quite close to a dismntled building that is well-outside of the parcel.
 
 We resume the development our our model.
 
