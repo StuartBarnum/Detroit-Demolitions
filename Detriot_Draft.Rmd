@@ -415,7 +415,7 @@ parcel_sf <- parcel_sf %>% rbind(unique_parcels)
 spatial_repeats <- st_join(parcel_sf, parcel_sf, 
         st_overlaps, left = FALSE) %>% filter(row_num.x != row_num.y)
 
-#create vectors or row numbers in parcel_sf whose corresponding elements specify objects in parcel_sf with overlapping geometries.
+#create vectors of row numbers in parcel_sf whose corresponding elements specify objects in parcel_sf with overlapping geometries.
 x_rows <- spatial_repeats$row_num.x
 y_rows <- spatial_repeats$row_num.y
 
@@ -423,11 +423,11 @@ y_rows <- spatial_repeats$row_num.y
 set.seed(55); sample <- sample(1:nrow(spatial_repeats), 20)
 parcel_selection <- spatial_repeats[sample,] %>% select(row_num.x, row_num.y)
 
-plots <- map(1:20, function(index){
+for (index in 1:20) {
   row_1 <- (parcel_sf %>% select(parcelnum))[parcel_selection$row_num.x[index],]
   row_2 <- (parcel_sf %>% select(parcelnum))[parcel_selection$row_num.y[index],]
   plot(rbind(row_1, row_2))
-})
+}
 
 #remove the row_num variable from pracel_sf
 parcel_sf <- parcel_sf %>% select(-row_num)
