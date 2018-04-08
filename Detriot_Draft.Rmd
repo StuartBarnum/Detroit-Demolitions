@@ -435,18 +435,16 @@ set.seed(55)
 sample <- sample(1:nrow(spatial_overlaps), 20)
 parcel_selection <- spatial_overlaps[sample,]
 
-plots <- list() #initialize a list of plots
+#plot the elements of the random sample of pairs for which st_overlaps had indicated an overlap
 for (index in 1:nrow(parcel_selection)) {
   row_1 <- parcel_sf %>% select(parcelnum) %>% 
     filter(parcelnum == parcel_selection$parcelnum.x[index])
   row_2 <- parcel_sf %>% select(parcelnum) %>% 
     filter(parcelnum == parcel_selection$parcelnum.y[index])
-  #plot(rbind(row_1, row_2))
-  plots[[index]] <- ggplot(rbind(row_1, row_2)) + geom_sf(aes(fill = parcelnum))
+  print(ggplot(rbind(row_1, row_2)) + geom_sf(aes(fill = parcelnum)))
 }
-plots
 
-rm(duplicate_parcel_numbers_in_parcel_data, selection_vector, unique_parcels, row_1, row_2, spatial_repeats, index, sample)
+rm(duplicate_parcel_numbers_in_parcel_data, selection_vector, unique_parcels, row_1, row_2, spatial_repeats, index, sample, parcel_selection)
 
 ```
 
