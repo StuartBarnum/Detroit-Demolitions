@@ -38,7 +38,7 @@ improve_detroit_issues <- read_csv("./data/Improve_Detroit_Issues_3_19_2018.csv"
 completed_demolitions <- read_csv("./data/Detroit_Demolitions.csv",
                                   guess_max = 10^6)
 
-#the shapefile representing Detroit parcels, read into 
+#the shapefile representing Detroit parcels, read as an sf data frame
 parcel_sf <- st_read("./data/Parcel Map")
 
 #convert the parcel number column to a character vector, to match `Parcel Number` in the dismantle permits data
