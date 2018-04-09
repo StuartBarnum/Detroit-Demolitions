@@ -450,7 +450,7 @@ rm(duplicate_parcel_numbers_in_parcel_data, selection_vector, unique_parcels, ro
 ```
 
 ```{r}
-#investagate a few of the cases by satelite map, 
+#investagate a few of the cases by road map 
 area_map <- function(sf_shape) {
   df <- tibble(longitude = st_coordinates(sf_shape)[,1],
                latitude = st_coordinates(sf_shape)[,2])
@@ -460,6 +460,21 @@ area_map <- function(sf_shape) {
                     max(df$longitude) + 0.002, max(df$latitude) + 0.002)
   detroit_gg <- get_map(location = bounding_box, 
                         maptype = "roadmap")
+  ggmap(detroit_gg)
+}
+
+area_map(parcel_sf %>% filter(parcelnum == "13000116.003"))
+
+#investigate a few of the cases by satelite map
+area_map <- function(sf_shape) {
+  df <- tibble(longitude = st_coordinates(sf_shape)[,1],
+               latitude = st_coordinates(sf_shape)[,2])
+  
+  #left/bottom/right/top for bounding box
+  bounding_box <- c(min(df$longitude) - 0.002, min(df$latitude) - 0.002, 
+                    max(df$longitude) + 0.002, max(df$latitude) + 0.002)
+  detroit_gg <- get_map(location = bounding_box, 
+                        maptype = "satellite")
   ggmap(detroit_gg)
 }
 
@@ -482,21 +497,7 @@ buildings_4 <- parcel_sf %>% filter(is.na(building_s) & num_buildi > 0)
 
 buildings_5 <- parcel_sf %>% filter(!is.na(building_s) & !num_buildi > 0)
 
-st_coordinates(parcel_sf %>% filter(parcelnum == "13000116.003"))
-
-area_map <- function(sf_shape) {
-  df <- tibble(longitude = st_coordinates(sf_shape)[,1],
-               latitude = st_coordinates(sf_shape)[,2])
-  
-  #left/bottom/right/top for bounding box
-  bounding_box <- c(min(df$longitude) - 0.002, min(df$latitude) - 0.002, 
-                    max(df$longitude) + 0.002, max(df$latitude) + 0.002)
-  detroit_gg <- get_map(location = bounding_box, 
-                        maptype = "satellite")
-  ggmap(detroit_gg)
-}
-
-area_map(parcel_sf %>% filter(parcelnum == "13000116.003"))
+buildings_5
 ```
 
 building_5 contains zero rows, thus indicating that all of the rows of buildings_1 is a subset of building_2. 
