@@ -3,7 +3,7 @@ title: "Blight Predictions for Detroit"
 output: html_notebook
 ---
 
-In this project, I will attempt to predict whether, for any given parcel in Detroit with a building on it, whether a building on that parcel will be be targeted for demolition. Potential predictors include citations related to the building, crime, and complaints concerning the building related to blight. The project is currently at the data cleaning stage, and I may add some other data to the project. So far I am using about 3GB of data downloaded from `https://data.detroitmi.gov/`.
+In this project, I will attempt to predict whether, for any building within a set of identified builings in Detroit, whether that building will be be targeted for demolition. Potential predictors include citations related to the building, crime, and complaints concerning the building related to blight. I have more-or-less completed the data-cleaning, and I am in the process of associating the various predictors with the builings. So far I am using about 3GB of data downloaded from `https://data.detroitmi.gov/`.
 
 
 ```{r, message = FALSE, warning = FALSE, results = FALSE}
@@ -361,6 +361,7 @@ completed_demolitions_sf <- completed_demolitions_split[[1]]
 #note that location information in completed_demolitions_sf is complete
 completed_demolitions_split[[2]]
 
+rm(completed_demolitions, completed_demolitions_split)
 ```
 We begin the process of signing labels to the buildings: blighted or not blighted. Buildings will be represented by parcels that have or have had buildings on them, whether by being so represented as in the `parcels_sf` data frame as including structures or in the dismantle permits dataframe as having had a dismantle permit associated with it, thus suggesting that there *was* a building on the parcel. 
 
@@ -444,8 +445,79 @@ for (index in 1:nrow(parcel_selection)) {
   print(ggplot(rbind(row_1, row_2)) + geom_sf(aes(fill = parcelnum)))
 }
 
-rm(duplicate_parcel_numbers_in_parcel_data, selection_vector, unique_parcels, row_1, row_2, spatial_repeats, index, sample, parcel_selection)
+rm(duplicate_parcel_numbers_in_parcel_data, selection_vector, unique_parcels, row_1, row_2, spatial_repeats, index, sample, parcel_selection, spatial_overlaps)
 
+```
+
+```{r}
+#investagate a few of the cases by satelite map, 
+area_map <- function(sf_shape) {
+  df <- tibble(longitude = st_coordinates(sf_shape)[,1],
+               latitude = st_coordinates(sf_shape)[,2])
+  
+  #left/bottom/right/top for bounding box
+  bounding_box <- c(min(df$longitude) - 0.002, min(df$latitude) - 0.002, 
+                    max(df$longitude) + 0.002, max(df$latitude) + 0.002)
+  detroit_gg <- get_map(location = bounding_box, 
+                        maptype = "roadmap")
+  ggmap(detroit_gg)
+}
+
+area_map(parcel_sf %>% filter(parcelnum == "13000116.003"))
+
+```
+
+We begin the process of creating a list of buildings, using on the parcels data. One of the issues to consider is number of buildings on the parcel. Should we restrict our analysis to those parcels that have only one buiding? In any case, two columns in `parcel_sf` bear on this aspect: `building_s` and `num_buildi`.  
+```{r}
+
+#exploration of the numbers of buildings on parcels
+
+buildings_1 <- parcel_sf %>% filter(!is.na(building_s))
+
+buildings_2 <- parcel_sf %>% filter(num_buildi > 0)
+
+buildings_3 <- parcel_sf %>% filter(!is.na(building_s) & num_buildi > 0)
+
+buildings_4 <- parcel_sf %>% filter(is.na(building_s) & num_buildi > 0)
+
+buildings_5 <- parcel_sf %>% filter(!is.na(building_s) & !num_buildi > 0)
+
+st_coordinates(parcel_sf %>% filter(parcelnum == "13000116.003"))
+
+area_map <- function(sf_shape) {
+  df <- tibble(longitude = st_coordinates(sf_shape)[,1],
+               latitude = st_coordinates(sf_shape)[,2])
+  
+  #left/bottom/right/top for bounding box
+  bounding_box <- c(min(df$longitude) - 0.002, min(df$latitude) - 0.002, 
+                    max(df$longitude) + 0.002, max(df$latitude) + 0.002)
+  detroit_gg <- get_map(location = bounding_box, 
+                        maptype = "satellite")
+  ggmap(detroit_gg)
+}
+
+area_map(parcel_sf %>% filter(parcelnum == "13000116.003"))
+```
+
+building_5 contains zero rows, thus indicating that all of the rows of buildings_1 is a subset of building_2. 
+
+```{r}
+buildings_6 <- parcel_sf %>% filter(num_buildi > 1)
+
+ggplot(buildings_1) + geom_bar(aes(x = as.factor(num_buildi)))
+
+ggplot(buildings_4) + geom_bar(aes(x = as.factor(num_buildi)))
+
+ggplot(buildings_6) + geom_bar(aes(x = building_s))
+
+```
+
+```{r}
+
+related <- buildings_1 %>% filter(!is.na(related_pa))
+sample <- sample_n(related, 20)
+
+rm(temp)
 ```
 
 The dismantle permits data also contains some duplicate parcel numbers over rows, in some cases over rows that contain address information suggesting that the location is different. (It also indicates that a few individual locations, identified with addresses, had more than one associated dismantle permit. This need not be problematic---a permit could expire before the work is carried out, or there could be more than one structure on a parcel.)  These repetitions are in `duplicate_parcel_numbers_over_distinct_addresses`, which contains 260 rows. I should also note that, in  most of these cases with duplicate parcel numbers (and addresses indicating different locations), the recorded latitude and longitude are identical. We can thus infer that some of this location information is incorrect.
@@ -492,6 +564,7 @@ geocoded_duplicates <- dup_par_num_over_distinct_addresses %>%
 #avoid having to do the geocoding again when re-running the code
 write_rds(geocoded_duplicates, "./data/geocoded_duplicates.rds")  
 
+rm(dup_par_num_over_distinct_addresses)
 ```
 
 Having identified some potentially problematic data points, we need to investigate a few of them. As in the following example.
