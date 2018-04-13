@@ -535,7 +535,7 @@ as.data.frame(dfs[[2]])
 
 rm(buildings_1,buildings_2, buildings_3, buildings_4, buildings_5, buildings_6)
 
-rm(row_1, row_2, sample, related, dfs)
+rm(row_1, row_2, sample, related, dfs, df)
 
 ```
 
@@ -580,13 +580,14 @@ geocoded_duplicates <- dup_par_num_over_distinct_addresses %>%
 #avoid having to do the geocoding again when re-running the code
 write_rds(geocoded_duplicates, "./data/geocoded_duplicates.rds")  
 
-rm(dup_par_num_over_distinct_addresses)
 ```
 
 Let's have a look at the relationship between the numbers of buildings on the parcels, as indicated in `parcel_sf`, and the numbers of times parcels occur in dup_par_num_over_distinct_addresses (which was constructed from the dismantle permits data)
 
 
 ```{r}
+
+rm(dup_par_num_over_distinct_addresses)
 
 #read the saved geocoded file into R
 geocoded_duplicates <- read_rds("./data/geocoded_duplicates.rds")
@@ -658,7 +659,7 @@ sf_points_map(temp3) +
 rm(temp3, temp4, temp5, joined_w_parcels_sf, geocoded_duplicates)
 ```
 
-It is notable that one of the positions associated with the dismantle permits is far enough from the the two parcels to potentially be closer to another parcel, which (upon further investigation with googe maps) appears to be adjecent to a vacant lot, on which dismantled building may have sat.
+It is notable that one of the positions associated with the dismantle permits is far enough from the the two parcels to be potentially closer to another parcel, which (upon further investigation with googe maps) appears to be adjecent to a vacant lot, on which a building, now dismantled, may have sat.
 
 Further investigation of `Parcel Number` duplicates in the dismantle permits data:
 
@@ -685,7 +686,7 @@ rm(dismantle_duplicates_geocoded)
 
 Using Google Street View to investigate some more dismantle permit entries for which there are other entries with the same parcel number but different addresses, we find mostly different locations at the same building (e.g. the two sides of a duplex), or perhaps two attached buildings. 
 
-Continuing with the matter of assigning labels to the buildings, we will now look at the completed demolitions data, completed_demolitions_sf. Although my initial idea was to use the dismantle permits to assign the labels---blighted (to be dismantled) and not blighted (not to be dismantled)---we should consider using the completed demolitions data instead. Although this data may omit blighted buildings which, or whatever reason, have not been demolished, this data may appear to cover just those buildings that have been dismantled under the Detroit Demolition Program. For example, if a new property owner dismantled a well-kept building for some reason, say to build a larger home, then, it may may seem, the demolition of this building would be relfected in the dismantle permits dataset but not in the completed demolitions dataset.
+Continuing with the matter of assigning labels to the buildings, we will now look at the completed demolitions data, completed_demolitions_sf. Although my initial idea was to use the dismantle permits to assign the labels---blighted (to be dismantled) and not blighted (not to be dismantled)---we should consider using the completed demolitions data instead. Although this data may omit blighted buildings which, for whatever reason, have not been demolished, this data may appear to cover just those buildings that have been dismantled under the Detroit Demolition Program. For example, if a new property owner dismantled a well-kept building for some reason, say to build a larger home, then, it may may seem, the demolition of this building would be reflected in the dismantle-permits dataset but not in the completed-demolitions dataset.
 
 ```{r, warning = FALSE}
 
@@ -711,9 +712,9 @@ as.data.frame(demolition_join_on_parcels) %>%
 set.seed(71)
 demolition_sample <- sample_n(demolition_join_on_parcels, 20)
 
+rm(dup_par_num_over_distinct_addresses, index)
 
 ```
-
 
 
 Continuing our construction:
