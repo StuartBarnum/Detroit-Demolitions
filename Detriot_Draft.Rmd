@@ -9,7 +9,6 @@ In this project, I will attempt to predict whether, for any building within a se
 ```{r, message = FALSE, warning = FALSE, results = FALSE}
 library(tidyverse)
 library(sf)
-library(lwgeom)
 library(ggmap)
 
 #recorded violations associated with blight (e.g. unkempt properties)
@@ -43,6 +42,10 @@ parcel_sf <- st_read("./data/Parcel Map")
 
 #convert the parcel number column to a character vector, to match `Parcel Number` in the dismantle permits data
 parcel_sf <- parcel_sf %>% mutate(parcelnum = as.character(parcelnum))
+
+#downloaded from http://d3-d3.opendata.arcgis.com/datasets/383eb730952e470389f09617b5448026_0 on 04/13/2018: "Harded Hit Fund Areas, with Expansion"
+Hardest_Hit_Fund_Areas <- st_read("./data/Hardest_Hit_Fund_Areas_with_Expansion.kml", 
+                                  crs = st_crs(parcel_sf))
 
 ```
 
@@ -78,7 +81,8 @@ add_sf_point <- function(df, column) {
   result_coord_na <- setdiff(mutated, filtered)
   
   #create sf objects from the rows with usable latitude and longitude information
-  result_sf <- st_as_sf(filtered, coords = c("extracted_lon", "extracted_lat"), crs = 4326)
+  result_sf <- st_as_sf(filtered, coords = c("extracted_lon", "extracted_lat"), 
+                        crs = st_crs(parcel_sf))
     
   return(list(result_sf, result_coord_na))
 }
@@ -173,7 +177,7 @@ blight_violations_geocodes <- blight_violations_geocodes %>%
 #put the position information into a simple features format (which will remove the "lat" and "lon" columns)
 blight_violations_geocodes_sf <- st_as_sf(blight_violations_geocodes, 
                                           coords = c("lon", "lat"),
-                                          crs = 4326)
+                                          crs = st_crs(parcel_sf))
 
 #combine the results with the previously generated sf data
 blight_violations_sf <- rbind(blight_violations_split[[1]], blight_violations_geocodes_sf)
@@ -221,7 +225,7 @@ dismantle_permits_split_geocode <-
 #convert to a simple features (sf) data frame, using the latititudes and longitudes
 dismantle_permits_geocode_sf <- st_as_sf(dismantle_permits_split_geocode, 
                                           coords = c("lon", "lat"),
-                                          crs = 4326)
+                                          crs = st_crs(parcel_sf))
 
 #append this simple features dataframe to the dataframe for which we already had usable positions
 dismantle_permits_sf <- rbind(dismantle_permits_split[[1]], dismantle_permits_geocode_sf)
@@ -287,7 +291,7 @@ crime_to_12062016_leftovers_geocode <-
 #create a simple features (sf) object, using the latititudes and longitudes
 crime_to_12062016_leftovers_sf <- st_as_sf(crime_to_12062016_leftovers_geocode, 
                                           coords = c("lon", "lat"),
-                                          crs = 4326)
+                                          crs = st_crs(parcel_sf))
 
 #append this simple features dataframe to the dataframe for which we already had locations
 crime_to_12062016_sf <- rbind(crime_to_12062016_split[[1]], crime_to_12062016_leftovers_sf)
@@ -328,7 +332,7 @@ crime_12062016_to_03192018_geocode <-
 #convert the dataframe to a simple features set
 crime_12062016_to_03192018_sf <- st_as_sf(crime_12062016_to_03192018_geocode, 
                                           coords = c("lon", "lat"),
-                                          crs = 4326)  
+                                          crs = st_crs(parcel_sf))  
 
 #combine the geocoded data with the sf dataframe created earlier
 crime_12062016_to_03192018 <- rbind(crime_12062016_to_03192018_split[[1]], crime_12062016_to_03192018_sf)
@@ -344,7 +348,7 @@ improve_detroit_issues_leftover_sf <- improve_detroit_issues_split[[2]] %>%
   select(-extracted_lat, -extracted_lon) %>%
   mutate(location = map(Address, geocode_pause)) %>%
   unnest(location) %>% 
-  st_as_sf(coords = c("lon", "lat"), crs = 4326)  
+  st_as_sf(coords = c("lon", "lat"), crs = st_crs(parcel_sf))  
 
 #splice with the previously generated sf dataframe
 improve_detroit_issues <- rbind(improve_detroit_issues_split[[1]], improve_detroit_issues_leftover_sf)
@@ -657,6 +661,8 @@ sf_points_map(temp3) +
   geom_sf(data = temp5 %>% select(geometry), crs = 3857, inherit.aes = FALSE)
 
 rm(temp3, temp4, temp5, joined_w_parcels_sf, geocoded_duplicates)
+rm(demolition_sample, geocoded_duplicates)
+rm(temp, temp2)
 ```
 
 It is notable that one of the positions associated with the dismantle permits is far enough from the the two parcels to be potentially closer to another parcel, which (upon further investigation with googe maps) appears to be adjecent to a vacant lot, on which a building, now dismantled, may have sat.
@@ -681,16 +687,25 @@ dismantle_duplicates_geocoded <-
   dismantle_duplicates_geocoded %>% distinct(lon, lat, .keep_all = TRUE)
 
 dismantle_duplicates_geocoded
+
+dismantle_duplicates_geocoded <- dismantle_duplicates_geocoded %>%
+  st_as_sf(coords = c("lon", "lat"), crs = st_crs(parcel_sf)) %>%
+  select(-parcel_number_occurances, -m)
+
+dismantle_permits_sf <- dismantle_permits_sf %>% 
+  filter(! `Parcel Number` %in% dismantle_duplicates_geocoded$`Parcel Number`) %>%
+  rbind(dismantle_duplicates_geocoded)
+
 rm(dismantle_duplicates_geocoded)
+rm(index)
 ```
 
 Using Google Street View to investigate some more dismantle permit entries for which there are other entries with the same parcel number but different addresses, we find mostly different locations at the same building (e.g. the two sides of a duplex), or perhaps two attached buildings. 
 
-Continuing with the matter of assigning labels to the buildings, we will now look at the completed demolitions data, completed_demolitions_sf. Although my initial idea was to use the dismantle permits to assign the labels---blighted (to be dismantled) and not blighted (not to be dismantled)---we should consider using the completed demolitions data instead. Although this data may omit blighted buildings which, for whatever reason, have not been demolished, this data may appear to cover just those buildings that have been dismantled under the Detroit Demolition Program. For example, if a new property owner dismantled a well-kept building for some reason, say to build a larger home, then, it may may seem, the demolition of this building would be reflected in the dismantle-permits dataset but not in the completed-demolitions dataset.
+Continuing with the matter of assigning labels to the buildings, we  now look at the completed demolitions data, completed_demolitions_sf. Although the initial idea was to use the dismantle permits data to assign the labels---blighted (to be dismantled) and not blighted (not to be dismantled)---we should consider using the completed demolitions data instead or in addition. Although this data may omit blighted buildings which, for whatever reason, have not been demolished or which, as indicated on the page by t this data may appear to cover just those buildings that have been dismantled under the Detroit Demolition Program. For example, if a new property owner dismantled a well-kept building for some reason, say to build a larger home, then, it may may seem, the demolition of this building would be reflected in the dismantle-permits dataset but not in the completed-demolitions dataset.
 
-```{r, warning = FALSE}
 
-head(completed_demolitions_sf)
+```{r}
 
 #look for repeats of "Parcel ID" on completed_demolitions_sf, finding none
 as.data.frame(completed_demolitions_sf) %>%
@@ -698,7 +713,7 @@ as.data.frame(completed_demolitions_sf) %>%
   mutate(n = n()) %>%
   filter(n > 1)
 
-#check to see how this data joins with the parcels data
+#check to see how this data joins with the parcels data, noting that it contains exactly seven rows less than completed_demolitions_sf contains
 demolition_join_on_parcels <- inner_join(parcel_sf, as.data.frame(completed_demolitions_sf),
                                          by = c("parcelnum" = "Parcel ID"))
 
@@ -708,11 +723,60 @@ as.data.frame(demolition_join_on_parcels) %>%
   mutate(n = n()) %>%
   filter(n > 1)
 
+#have look at the seven rows of completed_demolitions for which the `Parcel ID` did not match with a value of parcelnum in parcel_sf
+dismantled_parcels_left_out <- completed_demolitions_sf %>% 
+  filter(!`Parcel ID` %in% demolition_join_on_parcels$parcelnum)
+
+#link these to the parcels data set, parcel_sf, using a spacial join
+
+dismantled_left_out_joined <- dismantled_parcels_left_out %>%
+  st_join(parcel_sf %>% select(geometry), st_covered_by, left = FALSE)
+
 #look at a random sample of this set
 set.seed(71)
 demolition_sample <- sample_n(demolition_join_on_parcels, 20)
 
-rm(dup_par_num_over_distinct_addresses, index)
+rm(demolition_sample, demolition_join_on_parcels, dismantled_left_out_joined, dismantled_parcels_left_out)
+```
+
+Our parcel list, the standins for buildings, will be formed by those parcels that satisfy one or more of the following conditions:
+* in hardest hit areas with at least one building (or perhaps exaxctly one)
+* in hardest hit areas and reflected in dismantle permits data
+* in hardest hit areas and reflected in the completed demolitions data
+Having determined that the vast majority of the parcels have only one building, we may guess that that the existence of a few parcels with repeasts won't have much of a distorting affect.
+
+```{r, warning = FALSE}
+
+parcels_in_hardest_hit_areas <- parcel_sf %>%
+  st_join(Hardest_Hit_Fund_Areas, st_within, left = FALSE)
+
+completed_in_fund_areas_parcel_spatial <- parcels_in_hardest_hit_areas %>%
+  st_join(completed_demolitions_sf, st_contains, left = FALSE)
+
+completed_in_fund_areas_parcelnum_join <- parcels_in_hardest_hit_areas %>%
+  inner_join(as.data.frame(completed_demolitions_sf), 
+             by = c("parcelnum" = "Parcel ID"))
+
+dismantle_permit_fund_areas_spatial <- parcels_in_hardest_hit_areas %>%
+  st_join(dismantle_permits_sf, st_contains, left = FALSE)
+
+dismantle_permit_fund_areas_parcelnum_join <- parcels_in_hardest_hit_areas %>%
+  inner_join(as.data.frame(dismantle_permits_sf), 
+             by = c("parcelnum" = "Parcel Number"))
+
+#data frame with the parcel numbers of all parcels that have been at least one dismantled building or dismantle permit associated with it.
+blighted_parcels <- rbind(as.data.frame(completed_in_fund_areas_parcel_spatial) %>% select(parcelnum), 
+                          as.data.frame(completed_in_fund_areas_parcelnum_join) %>% select(parcelnum),
+                          as.data.frame(dismantle_permit_fund_areas_spatial) %>% select(parcelnum),
+                          as.data.frame(dismantle_permit_fund_areas_parcelnum_join) %>% select(parcelnum)) %>%
+  distinct(parcelnum)
+
+#data frame with the parcel numbers for all parcels in the hardest hit areas that have or have had at least one buiding on the parcel
+parcels_set <- as.data.frame(blighted_parcels) %>% 
+  rbind(as.data.frame(parcels_in_hardest_hit_areas) %>% 
+          filter(num_buildi > 0) %>% select(parcelnum) %>% distinct(parcelnum))
+
+rm(parcels_in_hardest_hit_areas, completed_in_fund_areas_parcel_spatial, completed_in_fund_areas_parcelnum_join, dismantle_permit_fund_areas_spatial, dismantle_permit_fund_areas_parcelnum_join)
 
 ```
 
@@ -726,7 +790,7 @@ dismantle_duplicates_geocoded <- dismantle_duplicates_geocoded %>%
   filter(!(`Site Address` == "3200 E LAFAYETTE-MARTIN LUTHER KING HIGH"))
 
 dismantle_duplicates_geocoded <- dismantle_duplicates_geocoded %>%
-  st_as_sf(coords = c("lon", "lat"), crs = 4326)
+  st_as_sf(coords = c("lon", "lat"), crs = st_crs(parcel_sf))
 
 #It is odd that this step is necessary, given that CRSs of the two data frames appear to be the same
 st_crs(dismantle_duplicates_geocoded) <- st_crs(parcel_sf)
@@ -777,9 +841,8 @@ parcel_join_sf_dismantle_first <-
 st_crs(parcel_sf)
 st_crs(dismantle_permits_sf)
 
-#Both of these yield an EPSG of 4326. Nethereless, the follow step seems necessary.
-
-st_crs(dismantle_permits_sf) <- st_crs(parcel_sf)
+#CUT? Both of these yield an EPSG of 4326. Nethereless, the follow step seems necessary.
+#st_crs(dismantle_permits_sf) <- st_crs(parcel_sf)
 
 temp <- st_join(dismantle_permits_sf, parcel_sf, join = st_within)
 
