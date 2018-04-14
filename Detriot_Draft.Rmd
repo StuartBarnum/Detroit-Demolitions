@@ -739,6 +739,7 @@ demolition_sample <- sample_n(demolition_join_on_parcels, 20)
 rm(demolition_sample, demolition_join_on_parcels, dismantled_left_out_joined, dismantled_parcels_left_out)
 ```
 
+
 Our parcel list, the standins for buildings, will be formed by those parcels that satisfy one or more of the following conditions:
 * in hardest hit areas with at least one building (or perhaps exaxctly one)
 * in hardest hit areas and reflected in dismantle permits data
