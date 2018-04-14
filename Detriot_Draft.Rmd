@@ -3,7 +3,7 @@ title: "Blight Predictions for Detroit"
 output: html_notebook
 ---
 
-In this project, I will attempt to predict whether, for any building within a set of identified builings in Detroit, whether that building will be be targeted for demolition. Potential predictors include citations related to the building, crime, and complaints concerning the building related to blight. I have more-or-less completed the data-cleaning, and I am in the process of associating the various predictors with the builings. So far I am using about 3GB of data downloaded from `https://data.detroitmi.gov/`.
+In this project, I will attempt to predict whether, for any building within a set of identified buildings in Detroit, whether that building will be be targeted for demolition. Potential predictors include citations related to the building, crime, and complaints concerning the building related to blight. I have more-or-less completed the data-cleaning, and I am in the process of associating the various predictors with the buildings. So far I am using about 3GB of data downloaded from `https://data.detroitmi.gov/`.
 
 
 ```{r, message = FALSE, warning = FALSE, results = FALSE}
@@ -488,7 +488,7 @@ satellite_map(parcel_sf %>% filter(parcelnum == "13000116.003"))
 
 ```
 
-We begin the process of creating a list of buildings from the parcels data. One of the issues to consider is number of buildings on the parcel. Should we restrict our analysis to those parcels that have only one buiding? In any case, two columns in `parcel_sf` bear on this aspect: `building_s` and `num_buildi`.  
+We begin the process of creating a list of buildings from the parcels data. One of the issues to consider is number of buildings on the parcel. Should we restrict our analysis to those parcels that have only one building? In any case, two columns in `parcel_sf` bear on this aspect: `building_s` and `num_buildi`.  
 ```{r}
 
 #exploration of the numbers of buildings on parcels
@@ -507,7 +507,7 @@ as.data.frame(buildings_5)
 
 ```
 
-building_5 contains zero rows, thus indicating that buildings_1 is a subset of building_2. On the other hand, buildings_4--the set of parcels with, according to the data, at least one buidling but with the building-type unspecified (NA in buidling_s) contains 18,749 rows.
+building_5 contains zero rows, thus indicating that buildings_1 is a subset of building_2. On the other hand, buildings_4--the set of parcels with, according to the data, at least one building but with the building-type unspecified (NA in building_s) contains 18,749 rows.
 
 ```{r}
 buildings_6 <- parcel_sf %>% filter(num_buildi > 1)
@@ -617,7 +617,7 @@ ggplot(joined_w_parcels_sf %>% filter(num_buildi < 11)) +
 
 ```
 
-Note the large number of cases for which `num_buildi` is equal to zero. If the data is accurate, then it is a reasonable guess that such cases reflect parcels for which num_buildi has been updated after all buildings have have been removed.
+Note the large number of cases for which `num_buildi` is equal to zero. If the data is accurate, then it is a reasonable guess that such cases reflect parcels for which num_build has been updated after all buildings have have been removed.
 
 ```{r, warning = FALSE}
 temp3 <- geocoded_duplicates %>% #select(`Parcel Number`, location, `Permit Location`) %>%
@@ -665,7 +665,7 @@ rm(demolition_sample, geocoded_duplicates)
 rm(temp, temp2)
 ```
 
-It is notable that one of the positions associated with the dismantle permits is far enough from the the two parcels to be potentially closer to another parcel, which (upon further investigation with googe maps) appears to be adjecent to a vacant lot, on which a building, now dismantled, may have sat.
+It is notable that one of the positions associated with the dismantle permits is far enough from the the two parcels to be potentially closer to another parcel, which (upon further investigation with Google maps) appears to be adjacent to a vacant lot, on which a building, now dismantled, may have sat.
 
 Further investigation of `Parcel Number` duplicates in the dismantle permits data:
 
@@ -741,10 +741,10 @@ rm(demolition_sample, demolition_join_on_parcels, dismantled_left_out_joined, di
 
 
 Our parcel list, the standins for buildings, will be formed by those parcels that satisfy one or more of the following conditions:
-* in hardest hit areas with at least one building (or perhaps exaxctly one)
+* in hardest hit areas with at least one building (or perhaps exactly one)
 * in hardest hit areas and reflected in dismantle permits data
 * in hardest hit areas and reflected in the completed demolitions data
-Having determined that the vast majority of the parcels have only one building, we may guess that that the existence of a few parcels with repeasts won't have much of a distorting affect.
+Having determined that the vast majority of the parcels have only one building, we may guess that that the existence of a few parcels with repeats won't have much of a distorting affect.
 
 ```{r, warning = FALSE}
 
