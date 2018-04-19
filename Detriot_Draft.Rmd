@@ -800,9 +800,11 @@ rm(demolition_sample, demolition_join_on_parcels, dismantled_left_out_joined, di
 ```
 
 Our parcel list, the standins for buildings, will be formed from those parcels that satisfy one or more of the following conditions:
+
 * The parcel is in a hardest hit area and has at least one building (or perhaps in another analysis, exactly one)
 * The parcel is in a hardest hit area and has a dismantle permit associated with it
 * The parcel is in a hardest hit area and has completed demolition associated with it
+
 Having determined that the vast majority of the parcels have only one building, we may guess that that the existence of a few parcels with repeats won't have much of a distorting affect.
 
 In associating dismantle permits and actual demolitions with individual parcels, I have prioritized spatial association (using `sf::st_join`) over matching of parcel numbers. (That is, in the limited number of cases where these methods of association disagree, we use the spatial association.)
