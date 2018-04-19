@@ -420,6 +420,46 @@ parcel_sf <- parcel_sf %>% filter(!(row_num %in% spatial_repeats$row_num.x))
 parcel_sf <- parcel_sf %>% rbind(unique_parcels)
 ```
 
+Having cut out the duplicate parcels (parcels that cover the same area), we plot the groups (as it turns out, pairs) that that have the same parcel number.
+
+```{r}
+
+repeated_parcel_numbers <- parcel_sf %>% group_by(parcelnum) %>% 
+  mutate(n = n()) %>% filter(n > 1) %>% ungroup()
+repeated_parcel_numbers <- repeated_parcel_numbers %>% select(parcelnum) %>% 
+  mutate(rownumber = row_number()) %>% mutate(plotted = FALSE)
+
+for (row_1 in repeated_parcel_numbers$rownumber) {
+  if (repeated_parcel_numbers$plotted[row_1] == FALSE) {
+    for (row_2 in repeated_parcel_numbers$rownumber) {
+      if (row_2 != row_1 & 
+          repeated_parcel_numbers$parcelnum[row_1] == repeated_parcel_numbers$parcelnum[row_2]) {
+        print(ggplot(repeated_parcel_numbers %>% filter(rownumber %in% c(row_1, row_2)) %>%
+                     select(parcelnum)) + geom_sf() + ggtitle(repeated_parcel_numbers$parcelnum[row_1]))
+        repeated_parcel_numbers[c(row_1, row_2),]$plotted<- TRUE 
+      }
+    }
+  }
+}
+
+rm(repeated_parcel_numbers)
+```
+
+Having verified that the repeats of the parcel numbers represent disinct parcels, modify the parcel numbers to make them disinct. 
+
+```{r}
+
+#add iteration numbers to parcelnum (a character variable) in the repeats within each set of repeasts
+parcel_sf <- parcel_sf %>% group_by(parcelnum) %>% mutate(n = n(), repeat_number = row_number()) %>% 
+  ungroup() %>%
+  mutate(parcelnum = ifelse(n > 1, str_c(parcelnum, "_", repeat_number), parcelnum)) %>%
+  select(-n, -repeat_number)
+
+#test for repeats
+temp <- parcel_sf %>% group_by(parcelnum) %>% mutate(n = n()) %>% filter(n > 1)
+temp
+```
+
 We now now use `sf::st_join`, with `st_overlaps`, to test for parcel overlap, with the result, according to the test, that there are several thousand pairs of parcels that overlap (share at least some portion of interior area).
 
 ```{r}
@@ -669,9 +709,6 @@ It is notable that one of the positions associated with the dismantle permits is
 
 Further investigation of `Parcel Number` duplicates in the dismantle permits data:
 
-
-
-
 ```{r}
 
 #read in the saved set of examples in the dismantle permits data that involve repeats of parcel numbers over different address strings.
@@ -712,15 +749,12 @@ dismantle_duplicates_geocoded <- spacial_join_within %>%
                                   `Parcel Number`)) %>%
   select(-parcelnum)
 
+#replace rows with duplicates of parcel numbers over distinct addresses with the cleaned set of rows, as per above
 dismantle_permits_sf <- dismantle_permits_sf %>% 
   filter(!(`Parcel Number` %in% dup_par_num_over_distinct_addresses$`Parcel Number`)) %>%
   rbind(dismantle_duplicates_geocoded)
 
-dismantle_permits_sf <- dismantle_permits_sf %>% 
-  filter(! `Parcel Number` %in% dismantle_duplicates_geocoded$`Parcel Number`) %>%
-  rbind(dismantle_duplicates_geocoded)
-
-rm(dismantle_duplicates_geocoded, dup_par_num_over_distinct_addresses)
+rm(dismantle_duplicates_geocoded, dup_par_num_over_distinct_addresses, spacial_join_within)
 rm(index)
 ```
 
@@ -737,12 +771,14 @@ as.data.frame(completed_demolitions_sf) %>%
   filter(n > 1)
 
 #check to see how this data joins with the parcels data, noting that it contains exactly seven rows less than completed_demolitions_sf contains
-demolition_join_on_parcels <- inner_join(parcel_sf, as.data.frame(completed_demolitions_sf),
+
+demolition_join_on_parcels <- as.data.frame(parcel_sf) %>% filter(!is.na(parcelnum)) %>%
+  inner_join(as.data.frame(completed_demolitions_sf %>% filter(!is.na(`Parcel ID`))),
                                          by = c("parcelnum" = "Parcel ID"))
 
 #look for repeats of parcelnum in demolition_join_on_parcels, finding none
 as.data.frame(demolition_join_on_parcels) %>%
-  select(-geometry.x, -geometry.y, -geometry) %>%
+  select(-geometry.x, -geometry.y) %>%
   group_by(parcelnum) %>%
   mutate(n = n()) %>%
   filter(n > 1)
@@ -763,30 +799,42 @@ demolition_sample <- sample_n(demolition_join_on_parcels, 20)
 rm(demolition_sample, demolition_join_on_parcels, dismantled_left_out_joined, dismantled_parcels_left_out)
 ```
 
-
-Our parcel list, the standins for buildings, will be formed by those parcels that satisfy one or more of the following conditions:
-* The parcel is a hardest hit area and has at least one building (or perhaps exactly one)
-* The parcel is a hardest hit area and reflected in dismantle permits data
-* The parcel is a hardest hit area and reflected in the completed demolitions data
+Our parcel list, the standins for buildings, will be formed from those parcels that satisfy one or more of the following conditions:
+* The parcel is in a hardest hit area and has at least one building (or perhaps in another analysis, exactly one)
+* The parcel is in a hardest hit area and has a dismantle permit associated with it
+* The parcel is in a hardest hit area and has completed demolition associated with it
 Having determined that the vast majority of the parcels have only one building, we may guess that that the existence of a few parcels with repeats won't have much of a distorting affect.
+
+In associating dismantle permits and actual demolitions with individual parcels, I have prioritized spatial association (using `sf::st_join`) over matching of parcel numbers. (That is, in the limited number of cases where these methods of association disagree, we use the spatial association.)
 
 ```{r, warning = FALSE}
 
+#the set of all rows of parcel_sf that are within one of the hardest hit areas
 parcels_in_hardest_hit_areas <- parcel_sf %>%
   st_join(Hardest_Hit_Fund_Areas, st_within, left = FALSE)
 
+#add a row number, so as to keep an account of which rows have been included in the following joins
+completed_demolitions_sf <- completed_demolitions_sf %>% mutate(rownumber = row_number())
+
+#inner join of parcels_in_hardest_hit_areas and completed_demolitions_sf, on the basis containment of the point, associated with the demolition dataset, in the parcel 
 completed_in_fund_areas_parcel_spatial <- parcels_in_hardest_hit_areas %>%
   st_join(completed_demolitions_sf, st_contains, left = FALSE)
 
+#inner join of parcels_in_hardest_hit_areas and completed_demolitions_sf, for those elements of completed_demolitions_sf that were not captured in the spatial join
 completed_in_fund_areas_parcelnum_join <- parcels_in_hardest_hit_areas %>%
-  inner_join(as.data.frame(completed_demolitions_sf), 
+  inner_join(as.data.frame(completed_demolitions_sf %>% 
+                             filter(! rownumber %in% completed_in_fund_areas_parcel_spatial$rownumber)), 
              by = c("parcelnum" = "Parcel ID"))
 
+#repeat the above three steps for the parcels that have dismantle permits associated with them
+dismantle_permits_sf <- dismantle_permits_sf %>% mutate(rownumber = row_number())
+  
 dismantle_permit_fund_areas_spatial <- parcels_in_hardest_hit_areas %>%
   st_join(dismantle_permits_sf, st_contains, left = FALSE)
 
 dismantle_permit_fund_areas_parcelnum_join <- parcels_in_hardest_hit_areas %>%
-  inner_join(as.data.frame(dismantle_permits_sf), 
+  inner_join(as.data.frame(dismantle_permits_sf %>%
+                             filter(! rownumber %in% dismantle_permit_fund_areas_spatial$rownumber)), 
              by = c("parcelnum" = "Parcel Number"))
 
 #data frame with the parcel numbers of all parcels that have been at least one dismantled building or dismantle permit associated with it.
@@ -798,94 +846,73 @@ blighted_parcels <- rbind(as.data.frame(completed_in_fund_areas_parcel_spatial) 
 
 #data frame with the parcel numbers for all parcels in the hardest hit areas that have or have had at least one buiding on the parcel
 parcels_set <- as.data.frame(blighted_parcels) %>% 
+  select(parcelnum) %>%
   rbind(as.data.frame(parcels_in_hardest_hit_areas) %>% 
-          filter(num_buildi > 0) %>% select(parcelnum) %>% distinct(parcelnum))
+          filter(num_buildi > 0) %>% select(parcelnum)) %>%
+  distinct(parcelnum)
 
-rm(parcels_in_hardest_hit_areas, completed_in_fund_areas_parcel_spatial, completed_in_fund_areas_parcelnum_join, dismantle_permit_fund_areas_spatial, dismantle_permit_fund_areas_parcelnum_join)
+labels <- parcels_set %>% mutate(blighted = ifelse(parcelnum %in% blighted_parcels$parcelnum, 1, 0))
+
+rm(completed_in_fund_areas_parcel_spatial, completed_in_fund_areas_parcelnum_join, dismantle_permit_fund_areas_spatial, dismantle_permit_fund_areas_parcelnum_join, parcels_set, blighted_parcels, dismantle_permit_fund_areas_parcelnum_join, dismantle_permit_fund_areas_spatial, completed_in_fund_areas_parcelnum_join, completed_in_fund_areas_parcel_spatial, parcels_in_hardest_hit_areas)
 
 ```
 
+Having explored and cleaned the data and constructed a set of labels---blighted or non-blighted---for our stand-ins for buildings (parcels), we begin to construct models for making predictions. The first step will be to add some properties to the parcels.
 
-We now begin the process of creating a set of labels over the buildings. The first step will be to create a dataframe in which each row is a "building"---the set parcels (elements of `parcel_sf`) such that each either (1) has a building on it, as indicated in `parcel_sf`, or (2) a dismantle permit for the same location as the parcel. I will begin with the identification of the buildings.
+```{r}
 
+#add the parcel geometry to the labels
+parcels_with_labels <- parcel_sf %>% select(parcelnum) %>%
+  inner_join(labels, by = "parcelnum")
 
-```{r, eval = FALSE}
+#note that `Ticket ID` provides a key for the blight_violations_sf. Is there a bug in the sf package, whereby, although it is possible ot contruct the following empty dataframe, it will not print?
+temp <- blight_violations_sf %>% as.data.frame() %>% select(-geometry) %>%
+  group_by(`Ticket ID`) %>% mutate(n = n()) %>% ungroup() %>% filter(n > 1)
+rm(temp)
 
-parcel_join_sf_parcel_first <- 
-  inner_join(parcel_sf %>% select(parcelnum) %>% mutate(parcelnum = as.character((parcelnum))),
-            dismantle_permits_sf %>% as.data.frame() %>% select(`Parcel Number`),
-            c("parcelnum" = "Parcel Number")) %>%
-  arrange(parcelnum)
+head(blight_violations_sf) 
 
-parcel_join_sf_dismantle_first <-
-  full_join(dismantle_permits_sf %>% select(`Parcel Number`), 
-            parcel_sf %>% as.data.frame() %>% select(parcelnum),
-            c("Parcel Number" = "parcelnum")) %>%
-  arrange(`Parcel Number`)
+#have a look at the distribution of violators (as indicated by `Violator ID`), noting the that the following construction contains zero rows
+violator_distribution <- blight_violations_sf %>% 
+  as.data.frame() %>% select(-geometry) %>% count(`Violator ID`) %>% filter(n > 1)
+rm(violator_distribution)
 
-st_crs(parcel_sf)
-st_crs(dismantle_permits_sf)
+#associate the blight violations data with parcels_with_labels, first with a spatial join and then, for any rows in blight_violations_sf for which the spatial association fails, with an inner join on the parcel numbers. recall that parcels_with_labels is restrcicted to the hardest hit areas
 
-#CUT? Both of these yield an EPSG of 4326. Nethereless, the follow step seems necessary.
-#st_crs(dismantle_permits_sf) <- st_crs(parcel_sf)
-
-temp <- st_join(dismantle_permits_sf, parcel_sf, join = st_within)
-
-temp2 <- inner_join(temp, as.data.frame(parcel_join_sf_parcel_first), by = "parcelnum")
+spatial_join <- parcels_with_labels %>% 
+  st_join(blight_violations_sf, st_contains, left = FALSE) %>%
+  select(-`Violation Parcel ID`)
   
-temp2 <- temp %>% filter(`Parcel Number` != parcelnum)
+blight_violations_leftovers <- blight_violations_sf %>% filter(! `Ticket ID` %in% spatial_join$`Ticket ID`)
 
-temp2 <- temp2 %>% select(`Parcel Number`, parcelnum, `Site Address`, address)
+parcelnum_join <- parcels_with_labels %>% 
+  inner_join((as.data.frame(blight_violations_leftovers) %>% select(-geometry)),
+             by = c("parcelnum" = "Violation Parcel ID"))
 
+blight_data <- rbind(spatial_join, parcelnum_join)
 
-#note that objectid in parcel_sf has no NA values, and that objectid is a key in parcel_sf
-parcel_sf %>% as.data.frame() %>% filter(is.na(objectid))
-parcel_sf %>% count(objectid) %>% filter(n > 1)
+rm(spatial_join, blight_violations_leftovers, parcelnum_join)
+head(as.data.frame(blight_data))
+```
 
-#note that `Permit Number` is a also a key, for dismantle_permits_sf
-dismantle_permits_sf %>% as.data.frame() %>% filter(is.na(`Permit Number`))
-dismantle_permits_sf %>% count(`Permit Number`) %>% filter(n > 1)
+We now construct a simple model from the blight data. The first step will be to aggregate some of the values.
 
-#with the above in mind, we examine the NA values for these columns in our full join, beginning with objectid in parcel_sf. The idea is that any NA value for objectid in parcel_join would correspond to a parcel in the dismantle permits dataset that is either not reflected in the parcels dataset or for which there is a flaw in the data.
-parcel_join %>% filter(is.na(objectid))
+```{r}
 
-dismantle_permits_sf %>% filter(`Parcel Number` == "22108512.")
+#dataset with two calculated variables, perhaps to be used as predictors
+blight_data_summary <- blight_data %>% as.data.frame() %>% select(-geometry) %>%
+  mutate(`Fine Amount` = as.numeric(str_sub(`Fine Amount`, start = 2))) %>%
+  group_by(parcelnum, blighted) %>%
+  summarize(n = n(),
+            total_fines = sum(`Fine Amount`))
 
-#dismantled_structures <- initial_join %>% filter(!is.na(`Permit Number`))
+#ensure that there are no repeats of parculnum in this set
+blight_data_summary %>% count(parcelnum) %>% filter(nn > 1)
 
-parcel_sf %>% filter(parcelnum == "22108512.")
+#note the number of positive instances of blight: 5684
+sum(blight_data_summary$blighted)
 
-parcel_tmp <- blight_violations_sf[c(1, 2),]
-
-st_distance(parcel_tmp)
-
-m_list <- mapply(st_distance, blight_violations_sf$geometry[1], fred$geometry)
-
-dismantle_permits_sf %>% as.data.frame() %>% filter(is.na(`Parcel Number`))
-
-temp4 <- st_distance(parcel_sf[195099,], 
-            blight_violations_sf[22233:22255,])
-
-st_crs(blight_violations_sf) <- st_crs(parcel_sf)
-
-plot(blight_violations_sf, max.plot = 1)
+blight_data_reduced <- sample_n(blight_data_summary, size = 6000, replace = TRUE)
 
 ```
 
-Maps:
-
-```{r, eval = FALSE}
-library(ggmap)
-
-ggplot(blight_violations_sf %>% select(geometry)) +
-  geom_sf() + 
-  geom_density2d(data = blight_violations_sf %>% select(geometry))
-
-
-detroit_gg <- get_map("Detroit", maptype = "toner-lite",
-                      zoom = 11)
-
-temp <- get_map()
-
-ggmap(detroit_gg)
-```
