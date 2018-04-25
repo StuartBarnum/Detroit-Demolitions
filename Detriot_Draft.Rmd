@@ -1,6 +1,8 @@
 ---
 title: "Blight Predictions for Detroit"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 In this project, I will attempt to predict whether, for any building within a set of identified buildings in Detroit, whether that building will be be targeted for demolition. Potential predictors include citations related to the building, crime, and complaints concerning the building related to blight. I have more-or-less completed the data-cleaning, and I am in the process of associating the various predictors with the buildings. So far I am using about 3GB of data downloaded from `https://data.detroitmi.gov/`.
