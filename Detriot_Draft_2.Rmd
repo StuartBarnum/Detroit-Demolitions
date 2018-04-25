@@ -51,7 +51,7 @@ Hardest_Hit_Fund_Areas <- st_read("./data/Hardest_Hit_Fund_Areas_with_Expansion.
 
 ```
 
-For all of the downloaded datasets other than the parcels dataset, we extract the usable latitude and longitude values and then use this information to form simple features (sf) objects. Rows with obviously incorrect values, or values that would represent positions well outside Detroit, are filtered out, together with rows for which the latitude or longitude data is missing.
+For all of the downloaded data sets other than the parcels dataset, we extract the usable latitude and longitude values and then use this information to form simple features (sf) objects. Rows with obviously incorrect values, or values that would represent positions well outside Detroit, are filtered out, together with rows for which the latitude or longitude data is missing.
 
 ```{r}
 
@@ -450,7 +450,7 @@ for (row_1 in repeated_parcel_numbers$rownumber) {
 rm(repeated_parcel_numbers)
 ```
 
-Having verified that the repeats of the parcel numbers represent disinct parcels, modify the parcel numbers to make them disinct. 
+Having verified that the repeats of the parcel numbers represent distinct parcels, modify the parcel numbers to make them distinct. 
 
 ```{r}
 
@@ -634,7 +634,7 @@ write_rds(geocoded_duplicates, "./data/geocoded_duplicates.rds")
 
 ```
 
-Let's have a look at the relationship between the numbers of buildings on the parcels, as indicated in `parcel_sf`, and the numbers of times parcels occur in dup_par_num_over_distinct_addresses (which was constructed from the dismantle permits data)
+Let's have a look at the relationship between the numbers of buildings on the parcels, as indicated in `parcel_sf`, and the numbers of times parcels occur in `dup_par_num_over_distinct_addresses` (which was constructed from the dismantle permits data)
 
 
 ```{r}
@@ -814,7 +814,7 @@ Our parcel list, the standins for buildings, will be formed from those parcels t
 
 Having determined that the great majority of the parcels have only one building, we may guess that that the existence of a few parcels with repeats won't have much of a distorting affect.
 
-After construction of a list of parcels, we proceed to a set of lables---blighted or not blighted---for each parcel, based on the the buiding's either having been dismantled or having had a dismantle permit associated with it. In associating dismantle permits and actual demolitions with individual parcels, I have prioritized spatial association (using `sf::st_join`) over matching of parcel numbers. (That is, in the limited number of cases where these methods of association disagree, we use the spatial association.)
+After construction of a list of parcels, we proceed to a set of labels---blighted or not blighted---for each parcel, based on the the building's either having been dismantled or having had a dismantle permit associated with it. In associating dismantle permits and actual demolitions with individual parcels, I have prioritized spatial association (using `sf::st_join`) over matching of parcel numbers. (That is, in the limited number of cases where these methods of association disagree, we use the spatial association.)
 
 ```{r, warning = FALSE}
 
@@ -870,7 +870,7 @@ rm(completed_in_fund_areas_parcel_spatial, completed_in_fund_areas_parcelnum_joi
 
 ```
 
-We now construct a ballanced set of labels, with roughly equal numbers of blighted and non-blighted examples. We then divide this set into a training set, an initial test set (which can be used for any number of tests), and a final test set, to be withhel for a final test of our final model.
+We now construct a balanced set of labels, with roughly equal numbers of blighted and non-blighted examples. We then divide this set into a training set, an initial test set (which can be used for any number of tests), and a final test set, to be withheld for a final test of our final model.
 
 ```{r}
 
@@ -957,7 +957,7 @@ ggplot(blight_violation_summary) +
   
 ```
 
-Now consider a histogram of the fine totals, with the note that geom_histogram may not be functioning as one would expect.
+Now consider a histogram of the fine totals, with the note that geom_histogram may not be functioning as one would expect. (I had a similar problem with the plot above, which I bypassed by implementing the counts with `dplyr`.) Possible bug to do with the interaction of the `ggplot` and `sf` packages?
 
 ```{r}
 
