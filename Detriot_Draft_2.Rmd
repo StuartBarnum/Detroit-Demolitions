@@ -1,0 +1,983 @@
+---
+title: "Blight Predictions for Detroit"
+output:
+  html_document:
+    df_print: paged
+---
+
+In this project, I will attempt to predict whether, for any building within a set of identified buildings in Detroit, whether that building will be be targeted for demolition. Potential predictors include citations related to the building, crime, and complaints concerning the building related to blight. I have more-or-less completed the data-cleaning, and I am in the process of associating the various predictors with the buildings. So far I am using about 3GB of data downloaded from `https://data.detroitmi.gov/`.
+
+
+```{r, message = FALSE, warning = FALSE, results = FALSE}
+library(tidyverse)
+library(sf)
+library(ggmap)
+
+#recorded violations associated with blight (e.g. unkempt properties)
+blight_violations <- read_csv("./data/Blight_Violations_3_19_2018.csv", 
+                              guess_max = 10^6)
+
+#read the downloaded file for all the building permits and then filter out the permits for dismantling
+dismantle_permits <- read_csv("./data/Building_Permits_3_19_2018.csv", 
+                             guess_max = 10^6) %>%
+  filter(`Building Permit Type` == "Dismantle")
+  
+#the files that contain the crime data
+crime_to_12062016 <- 
+  read_csv("./data/DPD__All_Crime_Incidents__January_1__2009_-_December_6__2016.csv",
+           guess_max = 10^6)
+
+crime_12062016_to_03192018 <- 
+  read_csv("./data/DPD__All_Crime_Incidents__December_6__2016_-_3_19_2018.csv", 
+           guess_max = 10^6)
+
+#the 311 system
+improve_detroit_issues <- read_csv("./data/Improve_Detroit_Issues_3_19_2018.csv", 
+                                   guess_max = 10^6)
+
+#another file with demolition information downloaded 4/4/2017. I should note that this file appears to cover a somewhat different domain of cases than does dismantle_permits. The difference appears to be that completed_demolitions covers just those buildings that have been dismantled under the Detroit Demolition Program. It may thus be the case that this data omits cases of buildings demolished not because of blight but to make room for something else. 
+completed_demolitions <- read_csv("./data/Detroit_Demolitions.csv",
+                                  guess_max = 10^6)
+
+#the shapefile representing Detroit parcels, read as an sf data frame
+parcel_sf <- st_read("./data/Parcel Map")
+
+#convert the parcel number column to a character vector, to match `Parcel Number` in the dismantle permits data
+parcel_sf <- parcel_sf %>% mutate(parcelnum = as.character(parcelnum))
+
+#downloaded from http://d3-d3.opendata.arcgis.com/datasets/383eb730952e470389f09617b5448026_0 on 04/13/2018: "Harded Hit Fund Areas, with Expansion"
+Hardest_Hit_Fund_Areas <- st_read("./data/Hardest_Hit_Fund_Areas_with_Expansion.kml", 
+                                  crs = st_crs(parcel_sf))
+
+```
+
+For all of the downloaded datasets other than the parcels dataset, we extract the usable latitude and longitude values and then use this information to form simple features (sf) objects. Rows with obviously incorrect values, or values that would represent positions well outside Detroit, are filtered out, together with rows for which the latitude or longitude data is missing.
+
+```{r}
+
+#function for converting the position (character) column into a column of points in the simple features (sf) framework.
+add_sf_point <- function(df, column) {
+  
+  #extract the latitude and longitude from the string column that contains both. With the parentheses
+  #located from the end of the strings, it is possible to use the the same function for all five of 
+  #the datasets for which we need to extract this information.
+  latitude <- str_sub(df[[column]], 
+                      stringi::stri_locate_last_fixed(df[[column]], "(")[,2] + 1,
+                      stringi::stri_locate_last_fixed(df[[column]], ",")[,1] - 1)
+  longitude <- str_sub(df[[column]], 
+                       stringi::stri_locate_last_fixed(df[[column]], ", ")[,2] + 1, 
+                       stringi::stri_locate_last_fixed(df[[column]], ")")[,1] - 1)
+  
+  #add the latititude and and longitude to a copy of the dataframe, filter out the NAs from
+  #these results, and then convert convert to sf, with point positions indicated in the
+  #geometry column
+  mutated <- df %>% mutate(extracted_lat = as.double(latitude),
+                      extracted_lon = as.double(longitude))
+  
+  #remove rows with NAs for latitude or longitude, or with values well outside of Detroit
+  filtered <- mutated %>%
+    filter(!is.na(extracted_lat) & !is.na(extracted_lon)) %>%
+    filter(41 < extracted_lat & extracted_lat < 44 & -85 < extracted_lon & extracted_lon < -81)
+    
+  #create a dataframe from the items that have been filtered out
+  result_coord_na <- setdiff(mutated, filtered)
+  
+  #create sf objects from the rows with usable latitude and longitude information
+  result_sf <- st_as_sf(filtered, coords = c("extracted_lon", "extracted_lat"), 
+                        crs = st_crs(parcel_sf))
+    
+  return(list(result_sf, result_coord_na))
+}
+
+#apply the function to the five datasets for which the data was not loaded as a simple features dataframe, thus producing a list of two dataframes for each of the datasets, the first element of the list a simple features data frame and the second element a dataframe with the instances for which it was not possible to convert to simple features
+blight_violations_split <- add_sf_point(blight_violations, "Violation Location")
+
+dismantle_permits_split <- add_sf_point(dismantle_permits, "Permit Location")
+
+crime_to_12062016_split <- add_sf_point(crime_to_12062016, "LOCATION")
+
+crime_12062016_to_03192018_split <- add_sf_point(crime_12062016_to_03192018, "Location")
+
+improve_detroit_issues_split <- add_sf_point(improve_detroit_issues, "Location")
+
+completed_demolitions_split <- add_sf_point(completed_demolitions, "Location")
+
+```
+
+We now consider the data for which we do not yet have position data, and complete the information as well as we reasonably can, using the Google API and a function, `geocode_pause`, that handles some of API's quirks.
+
+```{r}
+
+#the portino of the downloaded blight citations data, for which we do not have
+blight_vio_na <- blight_violations_split[[2]]
+
+#remove the rows for which geocoding is not likely to prodoce reliable results
+useful <- blight_vio_na %>% filter(!is.na(`Violation Street Name`), 
+                                   `Violation Street Number` > 0, 
+                                   !is.na(`Violation Zip Code`))
+
+#create a column of addresses to be used in geocoding
+useful <- useful %>% 
+  mutate(complete_address = paste(`Violation Street Number`, " ", `Violation Street Name`, ", ",
+                                  "Detroit, Michigan", " ", `Violation Zip Code`, sep = ""))
+
+#function makes a maximum 6 attempts to geocode the given address using the Google API, with a pause of 1 second between attempts. We will use the function for the other datasets as well.
+geocode_pause <- function(address) {
+  for (index in 1:6) {
+    Sys.sleep(1)
+    location <- ggmap::geocode(address)
+    if (!is.na(location$lon)) {
+      return(location)
+    }
+  }
+}
+```
+
+
+```{r, eval = FALSE}
+#apply geocode_pause to each of the elements of the complete_addresse column and place the result in a new column, in which each entry is a data frame 
+useful <- useful %>% mutate(location = map(complete_address, geocode_pause))
+
+#save to disc, to avoid avoid the need to geocode these addresses again when we rerun the analysis
+write_rds(useful, "./data/blight_violations_geocodes.rds")
+
+```
+
+The geocoding has returned a data frame for each of the addresses. We thus need to unpack the elements of the location column, each of which is a data frame.
+
+```{r}
+#read blight_violations_geocodes as a tibble
+blight_violations_geocodes <- read_rds("./data/blight_violations_geocodes.rds")
+
+#function for removing the instances for which geocoding failed (for which the value in the location column is NULLL). We will use this function for all of the geocoded data frames.
+remove_null_locations <- function(df) {
+  #identify the rows for which the value in the location column is NULL
+  null_rows <- list()
+  for (index in 1:nrow(df)) {
+    if (is.null(df$location[[index]])) {
+      null_rows <- c(null_rows, index)
+    }
+  }
+  #remove the rows for which the value of the location column is NULL
+  df <- df[-as.integer(null_rows),]
+}
+
+blight_violations_geocodes <- remove_null_locations(blight_violations_geocodes)
+
+#With blight_violations_geocodes a tibble, we can apply tidyr::unnest(), which will place the latitude and longitude in columns labelled "lat" and "lon".
+blight_violations_geocodes <- blight_violations_geocodes %>% unnest(location)
+
+#fill in the `Violation Latitute` and `Violation Longitude` data frames, which alread exist in the blight_violations data frame
+blight_violations_geocodes <- blight_violations_geocodes %>%
+  mutate(`Violation Latitude` = lat,
+         `Violation Longitude` = lon)
+
+#cut out some columns that have been added
+blight_violations_geocodes <- blight_violations_geocodes %>% 
+  select(-extracted_lat, -extracted_lon, -complete_address)
+
+#put the position information into a simple features format (which will remove the "lat" and "lon" columns)
+blight_violations_geocodes_sf <- st_as_sf(blight_violations_geocodes, 
+                                          coords = c("lon", "lat"),
+                                          crs = st_crs(parcel_sf))
+
+#combine the results with the previously generated sf data
+blight_violations_sf <- rbind(blight_violations_split[[1]], blight_violations_geocodes_sf)
+
+rm(blight_vio_na, blight_violations, blight_violations_geocodes, 
+   blight_violations_geocodes_sf, blight_violations_split, useful)
+
+```
+
+```{r}
+
+#the dismantle permits for which position data (latitude and longitude) is missing
+dismantle_permits_split_na <- dismantle_permits_split[[2]]
+
+#remove the last two columns, which were not contained in the original dismantle_permits datastet
+dismantle_permits_split_na <- dismantle_permits_split_na %>% 
+  select(-extracted_lat, -extracted_lon)
+
+```
+
+
+```{r, eval = FALSE}
+
+#geocode the items in dismantle_permits_split_na, using the address column and the function geocode_pause, which makes a maximum of six attempts for each item. The result is list of dataframes in the location column.
+dismantle_permits_split_geocode <- dismantle_permits_split_na %>%
+  mutate(location = map(str_c(`Site Address`, ", Detroit, Michigan"), geocode_pause))
+
+#write the results of the geocoding to disk, to avoid having to repeat the geocoding when rerunning the analysis.
+write_rds(dismantle_permits_split_geocode, "./data/dismantle_permits_geocodes.rds")
+
+rm(dismantle_permits_split_na)
+
+```
+
+
+```{r}
+#load the geocoded data frame into R
+dismantle_permits_split_geocode <- read_rds("./data/dismantle_permits_geocodes.rds")
+
+#use remove_null_locations() to remove the rows for which geocoding failed and then parse the information in the dataframes in the location column into two new columns, lat and lan
+dismantle_permits_split_geocode <- 
+  remove_null_locations(dismantle_permits_split_geocode) %>%
+  unnest(location)
+
+#convert to a simple features (sf) data frame, using the latititudes and longitudes
+dismantle_permits_geocode_sf <- st_as_sf(dismantle_permits_split_geocode, 
+                                          coords = c("lon", "lat"),
+                                          crs = st_crs(parcel_sf))
+
+#append this simple features dataframe to the dataframe for which we already had usable positions
+dismantle_permits_sf <- rbind(dismantle_permits_split[[1]], dismantle_permits_geocode_sf)
+
+rm(dismantle_permits_split_geocode, dismantle_permits_geocode_sf, dismantle_permits, dismantle_permits_split, dismantle_permits_split_na)
+
+```
+
+We now fill-in the missing position information for the dataset for crimes up to 12-06-2016
+
+```{r}
+
+#return to the older crime data
+crime_to_12062016_leftovers <- crime_to_12062016_split[[2]]
+
+#cut out the addresses that begin with "00"
+crime_to_12062016_leftovers <- crime_to_12062016_leftovers %>% 
+  filter(str_sub(LOCATION, 1, 2) != "00")
+
+#filter out some obviously useless addresses, with few characters before the first "("
+crime_to_12062016_leftovers <- crime_to_12062016_leftovers %>% 
+  filter(!str_locate(LOCATION, "\\(")[,1] %in% 1:13)
+
+#remove the two columns that were added earlier
+crime_to_12062016_leftovers <- crime_to_12062016_leftovers %>% 
+  select(-extracted_lat, -extracted_lon)
+
+#create a column for use in geocoding
+crime_to_12062016_leftovers <- crime_to_12062016_leftovers %>% 
+  mutate(extracted_address = str_c(str_sub(LOCATION, 1, 
+                                           str_locate(LOCATION, "\\(")[,1] - 2),
+                                                      ", Detroit, Michigan"))
+
+```
+
+```{r, eval = FALSE}
+
+#geocode the elements of extracted_address, using the function geocode_pause
+crime_to_12062016_leftovers_geocode <- crime_to_12062016_leftovers %>% 
+  mutate(location = map(extracted_address, geocode_pause))
+
+#save the results, to avoid having to geocode again when rerunning the analysis
+write_rds(crime_to_12062016_leftovers_geocode, "./data/crime_to_12062016_leftovers_geocode.rds")
+
+```
+
+
+
+```{r}
+
+#read the saved results
+crime_to_12062016_leftovers_geocode <- read_rds("./data/crime_to_12062016_leftovers_geocode.rds")
+
+#cut out the column we used for geocoding
+crime_to_12062016_leftovers_geocode <- 
+  crime_to_12062016_leftovers_geocode %>% select(-extracted_address)
+  
+#cut out of the geocode failures and put the location information into the columns lat and lon
+crime_to_12062016_leftovers_geocode <- 
+  remove_null_locations(crime_to_12062016_leftovers_geocode) %>%
+  unnest(location)
+
+#create a simple features (sf) object, using the latititudes and longitudes
+crime_to_12062016_leftovers_sf <- st_as_sf(crime_to_12062016_leftovers_geocode, 
+                                          coords = c("lon", "lat"),
+                                          crs = st_crs(parcel_sf))
+
+#append this simple features dataframe to the dataframe for which we already had locations
+crime_to_12062016_sf <- rbind(crime_to_12062016_split[[1]], crime_to_12062016_leftovers_sf)
+
+rm(crime_to_12062016, crime_to_12062016_leftovers_geocode, crime_to_12062016_leftovers_sf, crime_to_12062016_leftovers, crime_to_12062016_split)
+
+```
+
+
+```{r}
+
+#consider the examples in the recent crime data for which the conversion to sf didn't work, remove the two columns that we have added, and create and address column for geocoding
+crime_12062016_to_03192018_leftovers <- crime_12062016_to_03192018_split[[2]] %>%
+  select(-extracted_lat, -extracted_lon) %>%
+  mutate(extracted_address = str_c(`Incident Address`, ", Detroit, Michigan"))
+
+```
+
+```{r, eval = FALSE}
+
+crime_12062016_to_03192018_geocode <- crime_12062016_to_03192018_leftovers %>% 
+  mutate(location = map(extracted_address, geocode_pause))
+
+write_rds(crime_12062016_to_03192018_geocode, "./data/crime_12062016_to_03192018_geocode.rds")
+
+```
+
+```{r}
+
+crime_12062016_to_03192018_geocode <- read_rds("./data/crime_12062016_to_03192018_geocode.rds") %>%
+  select(-extracted_address)
+
+#remove the rows for which the value of location is NULL and then unnest the remaining locations
+crime_12062016_to_03192018_geocode <- 
+  remove_null_locations(crime_12062016_to_03192018_geocode) %>%
+  unnest(location)
+
+#convert the dataframe to a simple features set
+crime_12062016_to_03192018_sf <- st_as_sf(crime_12062016_to_03192018_geocode, 
+                                          coords = c("lon", "lat"),
+                                          crs = st_crs(parcel_sf))  
+
+#combine the geocoded data with the sf dataframe created earlier
+crime_12062016_to_03192018 <- rbind(crime_12062016_to_03192018_split[[1]], crime_12062016_to_03192018_sf)
+
+rm(crime_12062016_to_03192018_split, crime_12062016_to_03192018_geocode, crime_12062016_to_03192018_leftovers, crime_12062016_to_03192018_sf)
+
+```
+
+```{r}
+
+#geocode the one item in the Improve Detroit Issues data for which the given coordinates were obviously incorrect, and then convert to an sf object. If geocoding fails, run this bit again
+improve_detroit_issues_leftover_sf <- improve_detroit_issues_split[[2]] %>%
+  select(-extracted_lat, -extracted_lon) %>%
+  mutate(location = map(Address, geocode_pause)) %>%
+  unnest(location) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = st_crs(parcel_sf))  
+
+#splice with the previously generated sf dataframe
+improve_detroit_issues <- rbind(improve_detroit_issues_split[[1]], improve_detroit_issues_leftover_sf)
+
+rm(improve_detroit_issues_split, improve_detroit_issues_leftover_sf)
+
+```
+
+```{r}
+
+#create the other set of demolition information
+completed_demolitions_sf <- completed_demolitions_split[[1]]
+
+#note that location information in completed_demolitions_sf is complete
+completed_demolitions_split[[2]]
+
+rm(completed_demolitions, completed_demolitions_split)
+```
+We begin the process of signing labels to the buildings: blighted or not blighted. Buildings will be represented by parcels that have or have had buildings on them, whether by being so represented as in the `parcels_sf` data frame as including structures or in the dismantle permits dataframe as having had a dismantle permit associated with it, thus suggesting that there *was* a building on the parcel. 
+
+We will use parcel numbers to refer to the parcels. However, as the following bit of code shows, the parcels dataset contains a few rows in which the parcel numbers are the same (`duplicate_parcel_numbers_in_parcel_data` contains 78 rows). 
+
+```{r, warning = FALSE}
+
+#introduce a column of row numbers in the parcels data, for use in data cleaning
+parcel_sf <- parcel_sf %>%
+  mutate(row_num = row_number())
+
+#As per above, following returns a 78-row data frame
+duplicate_parcel_numbers_in_parcel_data <- 
+  parcel_sf %>%
+  group_by(parcelnum) %>% 
+  mutate(n = n()) %>%
+  ungroup() %>% 
+  filter(n > 1) %>%
+  select(parcelnum, address, legaldesc, row_num)
+duplicate_parcel_numbers_in_parcel_data
+
+```
+
+Plotting the parcel data suggests that, within groups of parcels that have the same parcel number, some of the parcels cover the same area while others are disjoint. We thus a apply a spatial join, using `sf::st_join`, to find pairs of parcels that cover the same area. After that, we modify `parcel_sf`, to be maximal set that contains none of these duplicates. 
+
+```{r}
+
+#join the result with itself, on the basis of sameness of identity of spatial identity 
+spatial_repeats <- st_join(duplicate_parcel_numbers_in_parcel_data,
+                           duplicate_parcel_numbers_in_parcel_data, 
+                           st_equals, left = FALSE) %>% filter(row_num.x != row_num.y)
+
+#select one element from each group with the sf objects for which the polygon covers the same area
+selection_vector <- 1:nrow(spatial_repeats)
+for (index in 1:nrow(spatial_repeats)) {
+  selection_vector[index] <- !(spatial_repeats$row_num.x[index] %in%
+                                spatial_repeats$row_num.y[1:index]) 
+}
+selection_vector <- as.logical(selection_vector)
+
+#the unique parcels, as specified in unique_parcels
+unique_parcels <- spatial_repeats[selection_vector,]
+
+#the unique parcels, as specified in parcel_sf, with a row number added to the end of the parcel number (character vector)
+unique_parcels <- parcel_sf %>% filter(row_num %in% unique_parcels$row_num.x) %>%
+  mutate(parcelnum = str_c(parcelnum, "_", row_number()))
+
+#cut out the set of sf objects that have spatial repeats  
+parcel_sf <- parcel_sf %>% filter(!(row_num %in% spatial_repeats$row_num.x))
+
+#bind the the set of unique spatial objects to parcel_sf
+parcel_sf <- parcel_sf %>% rbind(unique_parcels)
+```
+
+Having cut out the duplicate parcels (parcels that cover the same area), we plot the groups (as it turns out, pairs) that that have the same parcel number.
+
+```{r}
+
+library(tidyverse)
+library(sf)
+
+repeated_parcel_numbers <- parcel_sf %>% group_by(parcelnum) %>% 
+  mutate(n = n()) %>% filter(n > 1) %>% ungroup()
+repeated_parcel_numbers <- repeated_parcel_numbers %>% select(parcelnum) %>% 
+  mutate(rownumber = row_number()) %>% mutate(plotted = FALSE)
+
+for (row_1 in repeated_parcel_numbers$rownumber) {
+  if (repeated_parcel_numbers$plotted[row_1] == FALSE) {
+    for (row_2 in repeated_parcel_numbers$rownumber) {
+      if (row_2 != row_1 & 
+          repeated_parcel_numbers$parcelnum[row_1] == repeated_parcel_numbers$parcelnum[row_2]) {
+        print(ggplot(repeated_parcel_numbers %>% filter(rownumber %in% c(row_1, row_2)) %>%
+                     select(parcelnum)) + geom_sf() + ggtitle(repeated_parcel_numbers$parcelnum[row_1]))
+        repeated_parcel_numbers[c(row_1, row_2),]$plotted<- TRUE 
+      }
+    }
+  }
+}
+
+rm(repeated_parcel_numbers)
+```
+
+Having verified that the repeats of the parcel numbers represent disinct parcels, modify the parcel numbers to make them disinct. 
+
+```{r}
+
+#add iteration numbers to parcelnum (a character variable) in the repeats within each set of repeasts
+parcel_sf <- parcel_sf %>% group_by(parcelnum) %>% mutate(n = n(), repeat_number = row_number()) %>% 
+  ungroup() %>%
+  mutate(parcelnum = ifelse(n > 1, str_c(parcelnum, "_", repeat_number), parcelnum)) %>%
+  select(-n, -repeat_number)
+
+#test for repeats
+temp <- parcel_sf %>% as.data.frame() %>% select(-geometry) %>% 
+  group_by(parcelnum) %>% mutate(n = n()) %>% filter(n > 1)
+temp
+```
+
+We now now use `sf::st_join`, with `st_overlaps`, to test for parcel overlap, with the result, according to the test, that there are several thousand pairs of parcels that overlap (share at least some portion of interior area).
+
+```{r}
+
+#check for overlap of the parcels in parcel_sf
+spatial_overlaps <- st_join(parcel_sf, parcel_sf, 
+        st_overlaps, left = FALSE) %>% filter(row_num.x != row_num.y)
+
+nrow(spatial_overlaps)
+```
+
+Investigating the cases of overlap (according to `st_overlaps`) with plots of random selections of the supposedly overlapping pairs suggests that the apparent overlap is not significant (see below). It may be due to the fact that `st_join` treats latitude and longitude values as planar coordinates. I will assume that parcels do not overlap.
+
+```{r}
+
+#select a random sample of these cases of two parcels that overlap
+set.seed(55) 
+sample <- sample(1:nrow(spatial_overlaps), 20)
+parcel_selection <- spatial_overlaps[sample,]
+
+#plot the elements of the random sample of pairs for which st_overlaps had indicated an overlap
+for (index in 1:nrow(parcel_selection)) {
+  row_1 <- parcel_sf %>% select(parcelnum) %>% 
+    filter(parcelnum == parcel_selection$parcelnum.x[index])
+  row_2 <- parcel_sf %>% select(parcelnum) %>% 
+    filter(parcelnum == parcel_selection$parcelnum.y[index])
+  print(ggplot(rbind(row_1, row_2)) + geom_sf(aes(fill = parcelnum)))
+}
+
+rm(duplicate_parcel_numbers_in_parcel_data, selection_vector, unique_parcels, row_1, row_2, spatial_repeats, index, sample, parcel_selection, spatial_overlaps)
+
+```
+
+```{r, eval = FALSE}
+#(note that eval is set to false, to avoid rerunning this code every time I do implement "run all chunks")
+
+#investagate a few of the cases by road map 
+raod_map <- function(sf_shape) {
+  df <- tibble(longitude = st_coordinates(sf_shape)[,1],
+               latitude = st_coordinates(sf_shape)[,2])
+  
+  #left/bottom/right/top for bounding box
+  bounding_box <- c(min(df$longitude) - 0.002, min(df$latitude) - 0.002, 
+                    max(df$longitude) + 0.002, max(df$latitude) + 0.002)
+  detroit_gg <- get_map(location = bounding_box, 
+                        maptype = "roadmap")
+  ggmap(detroit_gg)
+}
+
+raod_map(parcel_sf %>% filter(parcelnum == "13000116.003"))
+
+#investigate a few of the cases by satelite map
+satellite_map <- function(sf_shape) {
+  df <- tibble(longitude = st_coordinates(sf_shape)[,1],
+               latitude = st_coordinates(sf_shape)[,2])
+  
+  #left/bottom/right/top for bounding box
+  bounding_box <- c(min(df$longitude) - 0.002, min(df$latitude) - 0.002, 
+                    max(df$longitude) + 0.002, max(df$latitude) + 0.002)
+  detroit_gg <- get_map(location = bounding_box, 
+                        maptype = "satellite")
+  ggmap(detroit_gg)
+}
+
+satellite_map(parcel_sf %>% filter(parcelnum == "13000116.003"))
+
+```
+
+We begin the process of creating a list of buildings from the parcels data. One of the issues to consider is number of buildings on the parcel. Should we restrict our analysis to those parcels that have only one building? In any case, two columns in `parcel_sf` bear on this aspect: `building_s` and `num_buildi`.  
+```{r}
+
+#exploration of the numbers of buildings on parcels
+buildings_1 <- parcel_sf %>% filter(!is.na(building_s))
+levels(buildings_1$building_s)
+
+buildings_2 <- parcel_sf %>% filter(num_buildi > 0)
+
+buildings_3 <- parcel_sf %>% filter(!is.na(building_s) & num_buildi > 0)
+
+buildings_4 <- parcel_sf %>% filter(is.na(building_s) & num_buildi > 0)
+nrow(buildings_4)
+
+buildings_5 <- parcel_sf %>% filter(!is.na(building_s) & !num_buildi > 0)
+
+#print, but first cut out the geometry column to avoid an error message.
+as.data.frame(buildings_5) %>% select(-geometry)
+
+```
+
+building_5 contains zero rows, thus indicating that buildings_1 is a subset of building_2. On the other hand, buildings_4--the set of parcels with, according to the data, at least one building but with the building-type unspecified (NA in building_s) contains 18,749 rows.
+
+```{r}
+buildings_6 <- parcel_sf %>% filter(num_buildi > 1)
+
+ggplot(buildings_1) + geom_bar(aes(x = as.factor(num_buildi)))
+
+ggplot(buildings_4) + geom_bar(aes(x = as.factor(num_buildi)))
+
+ggplot(buildings_6) + geom_bar(aes(x = building_s))
+
+```
+
+
+
+```{r}
+
+related <- buildings_1 %>% filter(!is.na(related_pa))
+set.seed(27)
+sample <- sample_n(related, 20)
+dfs <- list()
+for (index in 1:nrow(sample)) {
+  row_1 <- sample[index,]
+  row_2 <- parcel_sf %>% filter(parcelnum == sample$related_pa[index])
+  df <- rbind(row_1, row_2)
+  print(ggplot(df) + geom_sf(aes(fill = parcelnum)))
+  dfs[[index]] <- df
+}
+as.data.frame(dfs[[2]])
+
+rm(buildings_1,buildings_2, buildings_3, buildings_4, buildings_5, buildings_6)
+
+rm(row_1, row_2, sample, related, dfs, df)
+
+```
+
+I will ignore the "related parcels" (`related_pa`) in `parcel_sf`. Before making the final call as to what subset of the parcels dataframe will provide the stand-in for buildings, I will work on the data that we will use to form the labels. 
+
+Like the parcel_sf dataframe, the dismantle permits data also contains some duplicate parcel numbers over rows, in some cases over rows that contain address information suggesting that the location is different. (It also indicates that a few individual locations, identified with addresses, had more than one associated dismantle permit. This need not be problematic---a permit could expire before the work is carried out, or there could be more than one structure on a parcel.)  These repetitions are in `duplicate_parcel_numbers_over_distinct_addresses`, which contains 272 rows. I should also note that, in  most of these cases with duplicate parcel numbers (and addresses indicating different locations), the recorded latitude and longitude are identical. We can thus infer that some of this location information is incorrect.
+```{r}
+
+#repeated parcel numbers in the dismantle permits data
+dup_par_num_in_dismantle_data <-
+  dismantle_permits_sf %>%
+  group_by(`Parcel Number`) %>% 
+  mutate(n = n()) %>%
+  ungroup() %>% 
+  filter(n > 1) %>%
+  select(`Parcel Number`, `Site Address`) %>%
+  arrange(`Parcel Number`)
+rm(dup_par_num_in_dismantle_data)
+
+#parcel numbers in the dismantle permits data that are distributed over disinct address strings
+dup_par_num_over_distinct_addresses <- 
+  dismantle_permits_sf %>%
+  group_by(`Parcel Number`) %>%
+  mutate(parcel_number_occurances = n()) %>%
+  ungroup() %>%
+  filter(parcel_number_occurances > 1) %>%
+  group_by(`Parcel Number`, `Site Address`) %>%
+  mutate(m = n()) %>%
+  filter(m < parcel_number_occurances) %>%
+  arrange(`Parcel Number`)
+```
+
+
+```{r, eval = FALSE}
+
+#remove extraneous variables and then geocode the dismantle site addresses
+geocoded_duplicates <- dup_par_num_over_distinct_addresses %>%
+  as.data.frame %>%
+  select(-geometry) %>%
+  mutate(location = map(str_c(`Site Address`, ", Detroit, Michigan"), geocode_pause))
+  
+#avoid having to do the geocoding again when re-running the code
+write_rds(geocoded_duplicates, "./data/geocoded_duplicates.rds")  
+
+```
+
+Let's have a look at the relationship between the numbers of buildings on the parcels, as indicated in `parcel_sf`, and the numbers of times parcels occur in dup_par_num_over_distinct_addresses (which was constructed from the dismantle permits data)
+
+
+```{r}
+
+#read the saved geocoded file into R
+geocoded_duplicates <- read_rds("./data/geocoded_duplicates.rds")
+
+#unpack the column of dataframes created by the geocoding, remove rows with identical geocoding results, and convert the resulting dataframe into a set of sf objects
+geocoded_duplicates <- remove_null_locations(geocoded_duplicates) %>% 
+  unnest(location) %>% distinct(lon, lat, .keep_all = TRUE) %>%
+  st_as_sf(coords = c("lon", "lat"), crs = st_crs(parcel_sf))
+
+#ivestigate the relatinship between number buildings on a parcel, as specified in parcel_sf, and number of occurrences of parcel numbers in geocoded_duplicates
+joined_w_parcels_sf <- as.data.frame(geocoded_duplicates) %>% 
+  group_by(`Parcel Number`) %>% 
+  summarize(`number of locations` = n()) %>%
+  inner_join(as.data.frame(parcel_sf), by = c("Parcel Number" = "parcelnum")) 
+ggplot(joined_w_parcels_sf) +
+  geom_count(aes(x = as.factor(`number of locations`),
+                 y = num_buildi))
+
+#cut out the greater values of num_buildi, so as to widen the vertical scale
+ggplot(joined_w_parcels_sf %>% filter(num_buildi < 11)) +
+  geom_count(aes(x = as.factor(`number of locations`),
+                 y = as.factor(num_buildi)))
+
+```
+
+Note the large number of cases for which `num_buildi` is equal to zero. If the data is accurate, then it is a reasonable guess that such cases reflect parcels for which num_build has been updated after all buildings have have been removed.
+
+```{r, warning = FALSE}
+temp3 <- geocoded_duplicates %>% #select(`Parcel Number`, location, `Permit Location`) %>%
+  filter(`Parcel Number` == "13006809.")
+
+#function for putting a set of of sf point on a satelite map
+sf_points_map <- function(sf_df) {
+  df <- sf_df %>% mutate(longitude = st_coordinates(sf_df)[,1],
+                                latitude = st_coordinates(sf_df)[,2]) %>%
+  as.data.frame %>% select(longitude, latitude)
+  
+  #left/bottom/right/top for bounding box
+  bounding_box <- c(min(df$longitude) - 0.002, min(df$latitude) - 0.002, 
+                    max(df$longitude) + 0.002, max(df$latitude) + 0.002)
+  detroit_gg <- get_map(location = bounding_box, 
+                        maptype = "satellite")
+  ggmap(detroit_gg) + geom_point(data = df, aes(x = longitude, y = latitude),
+                                 color = "red") 
+}
+
+#map of points with Parcel Number listed as "13006809."
+sf_points_map(temp3)
+
+#note that "13006809." is not reflected as a parcel number in parcel_sf (noting that parcel_sf$parcelnum is an integer vector).
+nrow(parcel_sf %>% filter(parcelnum == "13006809."))
+
+#spacial join to see where these points in the dismantled dataset hook up with the parcels dataset, with the result that the parcel contains three of seven points with `Parcel Number` = "13006809.". The are nearby, although some of may be closer to other parcels.
+temp4 <- st_join(parcel_sf, temp3, left = FALSE, st_contains)
+
+temp4$`Parcel Number`
+as.numeric(as.character(temp4$parcelnum))
+
+temp5 <- parcel_sf %>%
+  filter((!as.numeric(as.character(parcelnum)) < 13006809) &
+          as.numeric(as.character(parcelnum)) < 13006810) %>%
+  select(parcelnum)
+as.data.frame(temp5$parcelnum)
+
+#plot with parcel "13006809." on a satelite map
+sf_points_map(temp3) +  
+  geom_sf(data = temp5 %>% select(geometry), crs = 3857, inherit.aes = FALSE)
+
+rm(temp3, temp4, temp5, joined_w_parcels_sf, geocoded_duplicates)
+rm(demolition_sample, geocoded_duplicates)
+rm(temp, temp2)
+```
+
+It is notable that one of the positions associated with the dismantle permits is far enough from the the two parcels to be potentially closer to another parcel, which (upon further investigation with Google maps) appears to be adjacent to a vacant lot, on which a building, now dismantled, may have sat.
+
+Further investigation of `Parcel Number` duplicates in the dismantle permits data:
+
+```{r}
+
+#read in the saved set of examples in the dismantle permits data that involve repeats of parcel numbers over different address strings.
+dismantle_duplicates_geocoded <- read_rds("./data/geocoded_duplicates.rds")
+
+#unpack the column of data frames (the outputs of geocode())
+dismantle_duplicates_geocoded <- remove_null_locations(dismantle_duplicates_geocoded) %>%
+   unnest(location)
+
+#note the 16 rows of dismantle_duplicates_geocoded for which another row lists the same longitude and latitude
+dismantle_duplicates_geocoded %>% 
+  group_by(lon, lat) %>% mutate(n = n()) %>% filter(n > 1)
+  
+#keep only the first of any group of rows with the same longitude and latitude
+dismantle_duplicates_geocoded <-
+  dismantle_duplicates_geocoded %>% distinct(lon, lat, .keep_all = TRUE)
+
+head(dismantle_duplicates_geocoded)
+
+#manually cut out the one remaining apparent duplicate location
+dismantle_duplicates_geocoded <- dismantle_duplicates_geocoded %>% 
+  filter(!(`Site Address` == "3200 E LAFAYETTE-MARTIN LUTHER KING HIGH"))
+
+dismantle_duplicates_geocoded <- dismantle_duplicates_geocoded %>%
+  st_as_sf(coords = c("lon", "lat"), crs = st_crs(parcel_sf)) %>%
+  select(-parcel_number_occurances, -m)
+
+#where possible, find the parcels that contain the positions corresponding to the coordinates
+spacial_join_within <- 
+  st_join(dismantle_duplicates_geocoded, 
+          parcel_sf %>% select(parcelnum), 
+          st_within)
+
+#change the parcel numbers (for the dismantle permits data) to those for the parcels that contain the parcels specified by the coordinates. remove the parcelnum column (from the parcel_sf data frame)
+dismantle_duplicates_geocoded <- spacial_join_within %>%
+  mutate(`Parcel Number` = ifelse(!is.na(parcelnum),
+                                  as.character(parcelnum),
+                                  `Parcel Number`)) %>%
+  select(-parcelnum)
+
+#replace rows with duplicates of parcel numbers over distinct addresses with the cleaned set of rows, as per above
+dismantle_permits_sf <- dismantle_permits_sf %>% 
+  filter(!(`Parcel Number` %in% dup_par_num_over_distinct_addresses$`Parcel Number`)) %>%
+  rbind(dismantle_duplicates_geocoded)
+
+rm(dismantle_duplicates_geocoded, dup_par_num_over_distinct_addresses, spacial_join_within)
+rm(index)
+```
+
+
+Using Google Street View to investigate some more dismantle permit entries for which there are other entries with the same parcel number but different addresses, we find mostly different locations at the same building (e.g. the two sides of a duplex), or perhaps two attached buildings. 
+
+Continuing with the matter of assigning labels to the buildings, we now look at the completed demolitions data, completed_demolitions_sf. Although the initial idea was to use the dismantle permits data to assign the labels---blighted (to be dismantled) and not blighted (not to be dismantled)---we should consider using the completed demolitions data instead or in addition. Although this data may omit blighted buildings which, for whatever reason, have not been demolished or which, as suggested on the City-of-Detroit web-page from which the file was downloaded, may have been demolished in a hurry, the data appears to be relatively clean and genuinely reflective and blightedness. For example, if a new property owner dismantled a well-kept building for some reason, say to build a larger home, then, it may may seem, the demolition of this building would be reflected in the dismantle-permits dataset but not in the completed-demolitions dataset.
+
+```{r}
+#look for repeats of "Parcel ID" on completed_demolitions_sf, finding none
+as.data.frame(completed_demolitions_sf) %>%
+  select(-geometry) %>%
+  group_by(`Parcel ID`) %>%
+  mutate(n = n()) %>%
+  filter(n > 1)
+
+#check to see how this data joins with the parcels data, noting that the inner join contains exactly seven rows less than completed_demolitions_sf contains
+demolition_join_on_parcels <- as.data.frame(parcel_sf) %>% filter(!is.na(parcelnum)) %>%
+  inner_join(as.data.frame(completed_demolitions_sf %>% filter(!is.na(`Parcel ID`))),
+                                         by = c("parcelnum" = "Parcel ID"))
+
+#look for repeats of parcelnum in demolition_join_on_parcels, finding none. we thus find near total agreement between the parcel_sf data frame and the completed demolitions data frame--given the information in parcel_sf, the parcel numbers in the completed demolitions dataset appear to be consistent with the location data.
+as.data.frame(demolition_join_on_parcels) %>%
+  select(-geometry.x, -geometry.y) %>%
+  group_by(parcelnum) %>%
+  mutate(n = n()) %>%
+  filter(n > 1)
+
+#have look at the seven rows of completed_demolitions for which the `Parcel ID` did not match with a value of parcelnum in parcel_sf
+dismantled_parcels_left_out <- completed_demolitions_sf %>% 
+  filter(!`Parcel ID` %in% demolition_join_on_parcels$parcelnum)
+
+#link these to the parcels data set, parcel_sf, using a spacial join
+
+dismantled_left_out_joined <- dismantled_parcels_left_out %>%
+  st_join(parcel_sf %>% select(geometry), st_covered_by, left = FALSE)
+
+#look at a random sample of this set
+set.seed(71)
+demolition_sample <- sample_n(demolition_join_on_parcels, 20)
+demolition_sample
+
+rm(demolition_sample, demolition_join_on_parcels, dismantled_left_out_joined, dismantled_parcels_left_out)
+```
+
+Our parcel list, the standins for buildings, will be formed from those parcels that satisfy one or more of the following conditions:
+
+* The parcel is in a hardest hit area and has at least one building (or perhaps in another analysis, exactly one building)
+* The parcel is in a hardest hit area and has a dismantle permit associated with it
+* The parcel is in a hardest hit area and has a completed demolition associated with it
+
+Having determined that the great majority of the parcels have only one building, we may guess that that the existence of a few parcels with repeats won't have much of a distorting affect.
+
+After construction of a list of parcels, we proceed to a set of lables---blighted or not blighted---for each parcel, based on the the buiding's either having been dismantled or having had a dismantle permit associated with it. In associating dismantle permits and actual demolitions with individual parcels, I have prioritized spatial association (using `sf::st_join`) over matching of parcel numbers. (That is, in the limited number of cases where these methods of association disagree, we use the spatial association.)
+
+```{r, warning = FALSE}
+
+#the set of all rows of parcel_sf that are within one of the hardest hit areas
+parcels_in_hardest_hit_areas <- parcel_sf %>%
+  st_join(Hardest_Hit_Fund_Areas, st_within, left = FALSE)
+
+#add a row number, so as to keep an account of which rows have been included in the following joins
+completed_demolitions_sf <- completed_demolitions_sf %>% mutate(rownumber = row_number())
+
+#inner join of parcels_in_hardest_hit_areas and completed_demolitions_sf, on the basis containment of the point, associated with the demolition dataset, in the parcel 
+completed_in_fund_areas_parcel_spatial <- parcels_in_hardest_hit_areas %>%
+  st_join(completed_demolitions_sf, st_contains, left = FALSE)
+
+#inner join of parcels_in_hardest_hit_areas and completed_demolitions_sf, for those elements of completed_demolitions_sf that were not captured in the spatial join
+completed_in_fund_areas_parcelnum_join <- parcels_in_hardest_hit_areas %>%
+  inner_join(as.data.frame(completed_demolitions_sf %>% 
+                             filter(! rownumber %in% completed_in_fund_areas_parcel_spatial$rownumber)), 
+             by = c("parcelnum" = "Parcel ID"))
+
+#repeat the above three steps for the parcels that have dismantle permits associated with them
+dismantle_permits_sf <- dismantle_permits_sf %>% mutate(rownumber = row_number())
+  
+dismantle_permit_fund_areas_spatial <- parcels_in_hardest_hit_areas %>%
+  st_join(dismantle_permits_sf, st_contains, left = FALSE)
+
+dismantle_permit_fund_areas_parcelnum_join <- parcels_in_hardest_hit_areas %>%
+  inner_join(as.data.frame(dismantle_permits_sf %>%
+                             filter(! rownumber %in% dismantle_permit_fund_areas_spatial$rownumber)), 
+             by = c("parcelnum" = "Parcel Number"))
+
+#data frame with the parcel numbers of all parcels that have been at least one dismantled building or dismantle permit associated with it.
+blighted_parcels <- rbind(as.data.frame(completed_in_fund_areas_parcel_spatial) %>% select(parcelnum), 
+                          as.data.frame(completed_in_fund_areas_parcelnum_join) %>% select(parcelnum),
+                          as.data.frame(dismantle_permit_fund_areas_spatial) %>% select(parcelnum),
+                          as.data.frame(dismantle_permit_fund_areas_parcelnum_join) %>% select(parcelnum)) %>%
+  distinct(parcelnum)
+
+#data frame with the parcel numbers for all parcels in the hardest hit areas that have or have had at least one buiding on the parcel
+parcels_set <- as.data.frame(blighted_parcels) %>% 
+  select(parcelnum) %>%
+  rbind(as.data.frame(parcels_in_hardest_hit_areas) %>% 
+          filter(num_buildi > 0) %>% select(parcelnum)) %>%
+  distinct(parcelnum)
+
+#our labels
+labels <- parcels_set %>% mutate(blighted = ifelse(parcelnum %in% blighted_parcels$parcelnum, 1, 0))
+
+#note the ballance of blighted versus not-blighted labels.
+labels %>% count(blighted) %>% mutate(fraction = n / sum(n))
+
+rm(completed_in_fund_areas_parcel_spatial, completed_in_fund_areas_parcelnum_join, dismantle_permit_fund_areas_spatial, dismantle_permit_fund_areas_parcelnum_join, parcels_set, blighted_parcels, dismantle_permit_fund_areas_parcelnum_join, dismantle_permit_fund_areas_spatial, completed_in_fund_areas_parcelnum_join, completed_in_fund_areas_parcel_spatial, parcels_in_hardest_hit_areasparcels_in_hardest_hit_areasparcels_in_hardest_hit_areas)
+
+```
+
+We now construct a ballanced set of labels, with roughly equal numbers of blighted and non-blighted examples. We then divide this set into a training set, an initial test set (which can be used for any number of tests), and a final test set, to be withhel for a final test of our final model.
+
+```{r}
+
+labels_balanced <- labels %>% filter(blighted == 0) %>% sample_n(10000) %>%
+  rbind(labels %>% filter(blighted == 1))
+
+```
+
+Having explored and cleaned the data and constructed a set of labels, we proceed to the construction of predictive models. The first step will be to add some properties to the set of labels.
+
+```{r}
+
+#add the parcel geometry to the labels
+parcels_with_labels <- parcel_sf %>% select(parcelnum) %>%
+  inner_join(labels_balanced, by = "parcelnum")
+
+#check to see that there are no parcel number repeats (finding none)
+parcels_with_labels %>% as.data.frame() %>% select(-geometry) %>% count(parcelnum) %>% filter(n > 1)
+
+#note that `Ticket ID` provides a key for blight_violations_sf (temp has zero elements)
+temp <- blight_violations_sf %>% as.data.frame() %>% select(-geometry) %>%
+  count(`Ticket ID`) %>% filter(n > 1)
+temp
+rm(temp)
+
+head(blight_violations_sf) 
+
+#have a look at the distribution of violators recorded in blight_violations_sf for (as indicated by `Violator ID`), noting that the following construction contains zero rows (Violator ID thus doesn't seem to be useful)
+violator_distribution <- blight_violations_sf %>% 
+  as.data.frame() %>% select(-geometry) %>% count(`Violator ID`) %>% filter(n > 1)
+violator_distribution
+rm(violator_distribution)
+
+#associate the blight violations data with parcels_with_labels, first with a spatial join and then, for any rows in blight_violations_sf for which the spatial association fails, with an inner join on the parcel numbers. recall that parcels_with_labels is restrcicted to the hardest hit areas
+
+spatial_join <- parcels_with_labels %>% 
+  st_join(blight_violations_sf, st_contains, left = FALSE) %>%
+  select(-`Violation Parcel ID`)
+
+#make use of the key `Ticket ID` to find the leftovers
+blight_violations_leftovers <- blight_violations_sf %>% filter(! `Ticket ID` %in% spatial_join$`Ticket ID`)
+
+parcelnum_join <- parcels_with_labels %>% 
+  inner_join((as.data.frame(blight_violations_leftovers) %>% select(-geometry)),
+             by = c("parcelnum" = "Violation Parcel ID"))
+
+blight_violation_data <- rbind(spatial_join, parcelnum_join)
+
+blight_violation_data <- inner_join(parcels_with_labels, 
+                                     as.data.frame(blight_violation_data) %>% select(-geometry, -blighted), 
+                                     by = "parcelnum")
+
+rm(spatial_join, blight_violations_leftovers, parcelnum_join)
+
+```
+
+We consider a histogram of the blight data
+
+```{r}
+
+#dataset with two calculated variables, perhaps to be used as predictors
+blight_violation_tallies <- blight_violation_data %>% as.data.frame() %>% select(-geometry) %>%
+  mutate(`Fine Amount` = as.numeric(str_sub(`Fine Amount`, start = 2))) %>%
+  group_by(parcelnum, blighted) %>%
+  summarize(number_of_violations_by_parcel = n(), total_fines_by_parcel = sum(`Fine Amount`))
+
+blight_violation_tallies <- as.tibble(blight_violation_tallies)
+
+parcels_without_blight_violations <- labels_balanced %>% 
+  filter(!parcelnum %in% blight_violation_tallies$parcelnum) %>%
+  mutate(number_of_violations_by_parcel = 0, total_fines_by_parcel = 0)
+
+blight_violation_tallies <- bind_rows(blight_violation_tallies, parcels_without_blight_violations)
+
+blight_violation_summary <- blight_violation_tallies %>% 
+  filter(number_of_violations_by_parcel < 19) %>%
+  group_by(number_of_violations_by_parcel, blighted) %>% summarize(n = n()) 
+
+ggplot(blight_violation_summary) + 
+  geom_col(aes(x = number_of_violations_by_parcel,
+               y = n, 
+               fill = as.factor(blighted)),
+           position = "dodge2")
+  
+```
+
+Now consider a histogram of the fine totals, with the note that geom_histogram may not be functioning as one would expect.
+
+```{r}
+
+head(blight_violation_tallies)
+
+blight_violation_tallies %>% filter(total_fines_by_parcel < 5000) %>% 
+  ggplot(aes(x = total_fines_by_parcel, fill = as.factor(blighted))) + 
+  geom_histogram(binwidth = 200)
+
+```
+
+We will next construct a logistic model, using the constructed dataframe that we used for the two plots above.
+
+```{r}
+
+blight_violation_tallies$blighted <- as.factor(blight_violation_tallies$blighted)
+
+model <- glm(blighted ~ total_fines_by_parcel + number_of_violations_by_parcel, 
+             data = blight_violation_tallies, family = binomial)
+
+
+```
+
