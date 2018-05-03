@@ -789,19 +789,13 @@ as.data.frame(demolition_join_on_parcels) %>%
   mutate(n = n()) %>%
   filter(n > 1)
 
-#have look at the seven rows of completed_demolitions for which the `Parcel ID` did not match with a value of parcelnum in parcel_sf
+#have a look at the seven rows of completed_demolitions for which the `Parcel ID` did not match with a value of parcelnum in parcel_sf
 dismantled_parcels_left_out <- completed_demolitions_sf %>% 
   filter(!`Parcel ID` %in% demolition_join_on_parcels$parcelnum)
 
 #link these to the parcels data set, parcel_sf, using a spacial join
-
 dismantled_left_out_joined <- dismantled_parcels_left_out %>%
   st_join(parcel_sf %>% select(geometry), st_covered_by, left = FALSE)
-
-#look at a random sample of this set
-set.seed(71)
-demolition_sample <- sample_n(demolition_join_on_parcels, 20)
-demolition_sample
 
 rm(demolition_sample, demolition_join_on_parcels, dismantled_left_out_joined, dismantled_parcels_left_out)
 ```
@@ -822,14 +816,14 @@ After construction of a list of parcels, we proceed to a set of labels---blighte
 parcels_in_hardest_hit_areas <- parcel_sf %>%
   st_join(Hardest_Hit_Fund_Areas, st_within, left = FALSE)
 
-#add a row number, so as to keep an account of which rows have been included in the following joins
+#add a row number to completed_demolitions_sf, so as to keep an account of which rows have been included in the following joins
 completed_demolitions_sf <- completed_demolitions_sf %>% mutate(rownumber = row_number())
 
-#inner join of parcels_in_hardest_hit_areas and completed_demolitions_sf, on the basis containment of the point, associated with the demolition dataset, in the parcel 
+#inner spacial join of parcels_in_hardest_hit_areas and completed_demolitions_sf, on the basis containment of the point associated with the demolition dataset, in the parcel 
 completed_in_fund_areas_parcel_spatial <- parcels_in_hardest_hit_areas %>%
   st_join(completed_demolitions_sf, st_contains, left = FALSE)
 
-#inner join of parcels_in_hardest_hit_areas and completed_demolitions_sf, for those elements of completed_demolitions_sf that were not captured in the spatial join
+#inner join of parcels_in_hardest_hit_areas and completed_demolitions_sf, on the basis of identify of parcel numbers, for those elements of completed_demolitions_sf that were not captured in the spatial join
 completed_in_fund_areas_parcelnum_join <- parcels_in_hardest_hit_areas %>%
   inner_join(as.data.frame(completed_demolitions_sf %>% 
                              filter(! rownumber %in% completed_in_fund_areas_parcel_spatial$rownumber)), 
@@ -870,12 +864,17 @@ rm(completed_in_fund_areas_parcel_spatial, completed_in_fund_areas_parcelnum_joi
 
 ```
 
-We now construct a balanced set of labels, with roughly equal numbers of blighted and non-blighted examples. We then divide this set into a training set, an initial test set (which can be used for any number of tests), and a final test set, to be withheld for a final test of our final model.
+We now construct a balanced set of labels, with roughly equal numbers of blighted and non-blighted examples. We then divide the set of parcel numbers into training and test sets, on a ratio of 0.8 to 0.2. Note that we will be using 10-fold cross validation on the training set, with the 20 percent of all of the items set asside for a final test of our model.
 
 ```{r}
 
 labels_balanced <- labels %>% filter(blighted == 0) %>% sample_n(10000) %>%
   rbind(labels %>% filter(blighted == 1))
+
+set.seed(82)
+training_rows <- caret::createDataPartition(labels_balanced$blighted, p = 0.8, list = FALSE)
+training_parcelnums <- labels_balanced[training_rows,]$parcelnum
+testing_parcelnums <- labels_balanced[-training_rows,]$parcelnum
 
 ```
 
@@ -905,7 +904,6 @@ violator_distribution
 rm(violator_distribution)
 
 #associate the blight violations data with parcels_with_labels, first with a spatial join and then, for any rows in blight_violations_sf for which the spatial association fails, with an inner join on the parcel numbers. recall that parcels_with_labels is restrcicted to the hardest hit areas
-
 spatial_join <- parcels_with_labels %>% 
   st_join(blight_violations_sf, st_contains, left = FALSE) %>%
   select(-`Violation Parcel ID`)
@@ -913,6 +911,7 @@ spatial_join <- parcels_with_labels %>%
 #make use of the key `Ticket ID` to find the leftovers
 blight_violations_leftovers <- blight_violations_sf %>% filter(! `Ticket ID` %in% spatial_join$`Ticket ID`)
 
+#now handle the leftovers
 parcelnum_join <- parcels_with_labels %>% 
   inner_join((as.data.frame(blight_violations_leftovers) %>% select(-geometry)),
              by = c("parcelnum" = "Violation Parcel ID"))
@@ -931,7 +930,7 @@ We consider a histogram of the blight data
 
 ```{r}
 
-#dataset with two calculated variables, perhaps to be used as predictors
+#dataset with two calculated variables--total number of blight violations and tot4 perhaps to be used as predictors
 blight_violation_tallies <- blight_violation_data %>% as.data.frame() %>% select(-geometry) %>%
   mutate(`Fine Amount` = as.numeric(str_sub(`Fine Amount`, start = 2))) %>%
   group_by(parcelnum, blighted) %>%
@@ -954,7 +953,8 @@ ggplot(blight_violation_summary) +
                y = n, 
                fill = as.factor(blighted)),
            position = "dodge2")
-  
+
+rm(blight_violation_summary)  
 ```
 
 Now consider a histogram of the fine totals, with the note that geom_histogram may not be functioning as one would expect. (I had a similar problem with the plot above, which I bypassed by implementing the counts with `dplyr`.) Possible bug to do with the interaction of the `ggplot` and `sf` packages?
@@ -969,15 +969,57 @@ blight_violation_tallies %>% filter(total_fines_by_parcel < 5000) %>%
 
 ```
 
-We will next construct a logistic model, using the constructed dataframe that we used for the two plots above.
+We will next construct a simple logistic model, using the constructed dataframe that we used for the two plots above. The two predictors will be the number of blight violaitons and the total amount in fines.
 
 ```{r}
 
-blight_violation_tallies$blighted <- as.factor(blight_violation_tallies$blighted)
+#separate the examples to be used for the training from the twenty percent of the examples to be withheld for final testing (remembering that we will do 10-fold cross validation over the training set)
 
-model <- glm(blighted ~ total_fines_by_parcel + number_of_violations_by_parcel, 
-             data = blight_violation_tallies, family = binomial)
+train <- blight_violation_tallies %>% filter(parcelnum %in% training_parcelnums)
 
+#partition the training set into ten subsets, while maintaining a ballance between expamples labeled as blighted and examples not so labeled
+set.seed(294)
+k_folds <- caret::createFolds(train$blighted)
+
+models <- 1:10 %>% map(~ glm(blighted ~ total_fines_by_parcel + number_of_violations_by_parcel,
+                             data = train[-k_folds[[.x]],], family = "binomial"))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],],
+                                      type = "response"))
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+#construct a of pridictor values and then represent the predictions with colors
+library(modelr)
+number_of_violations_by_parcel <- 
+  seq_range(train$number_of_violations_by_parcel, n = 10, pretty = TRUE, trim = 0.05)
+total_fines_by_parcel <- seq_range(train$total_fines_by_parcel, n = 10, pretty = TRUE, trim = 0.05)
+
+grid <- crossing(number_of_violations_by_parcel,
+                 total_fines_by_parcel)
+
+#have a look at the third model (among the k-fold validation models)
+grid <- grid %>% add_predictions(models[[3]])
+
+ggplot(grid) + geom_point(aes(x = number_of_violations_by_parcel, 
+                              y = total_fines_by_parcel, color = pred > .5))
+
+
+ggplot(grid) + geom_histogram(aes(x = pred))
+
+mean(grid$pred > .5)
 
 ```
+
+Note that the models are much better at predicting negative instances (truth = 0) instances than predicting positive instances (true = 1). (It gets most of the positive instances wrong.)
+
 
