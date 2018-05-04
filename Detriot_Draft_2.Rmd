@@ -974,8 +974,8 @@ We will next construct a simple logistic model, using the constructed dataframe 
 ```{r}
 
 #separate the examples to be used for the training from the twenty percent of the examples to be withheld for final testing (remembering that we will do 10-fold cross validation over the training set)
-
 train <- blight_violation_tallies %>% filter(parcelnum %in% training_parcelnums)
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
 
 #partition the training set into ten subsets, while maintaining a ballance between expamples labeled as blighted and examples not so labeled
 set.seed(294)
@@ -984,7 +984,7 @@ k_folds <- caret::createFolds(train$blighted)
 models <- 1:10 %>% map(~ glm(blighted ~ total_fines_by_parcel + number_of_violations_by_parcel,
                              data = train[-k_folds[[.x]],], family = "binomial"))
 
-predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],],
+predictions <- 1:10 %>% map(~ predict.glm(models[[.x]], newdata = train[k_folds[[.x]],],
                                       type = "response"))
 accuracies <- 1:10 %>% 
   map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
@@ -998,7 +998,7 @@ for (index in 1:10) {
   print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
 }
 
-#construct a of pridictor values and then represent the predictions with colors
+#construct a grid of predictor values and then represent the predictions with colors
 library(modelr)
 number_of_violations_by_parcel <- 
   seq_range(train$number_of_violations_by_parcel, n = 10, pretty = TRUE, trim = 0.05)
@@ -1011,15 +1011,160 @@ grid <- crossing(number_of_violations_by_parcel,
 grid <- grid %>% add_predictions(models[[3]])
 
 ggplot(grid) + geom_point(aes(x = number_of_violations_by_parcel, 
-                              y = total_fines_by_parcel, color = pred > .5))
+                              y = total_fines_by_parcel, color = pred > 0.5))
 
-
-ggplot(grid) + geom_histogram(aes(x = pred))
-
-mean(grid$pred > .5)
 
 ```
 
 Note that the models are much better at predicting negative instances (truth = 0) instances than predicting positive instances (true = 1). (It gets most of the positive instances wrong.)
 
+We now compare this with a simple rpart (decision tree) model
 
+```{r}
+
+#separate the examples to be used for the training from the twenty percent of the examples to be withheld for final testing (remembering that we will do 10-fold cross validation over the training set)
+train <- blight_violation_tallies %>% filter(parcelnum %in% training_parcelnums)
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+train$blighted <- as.factor(train$blighted)
+
+#partition the training set into ten subsets, while maintaining a ballance between expamples labeled as blighted and examples not so labeled
+set.seed(294)
+k_folds <- caret::createFolds(train$blighted)
+
+models <- 1:10 %>% map(~ rpart(blighted ~ total_fines_by_parcel + number_of_violations_by_parcel,
+                             data = train[-k_folds[[.x]],]))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+#construct a grid of predictor values and then represent the predictions with colors
+library(modelr)
+number_of_violations_by_parcel <- 
+  seq_range(train$number_of_violations_by_parcel, n = 10, pretty = TRUE, trim = 0.05)
+total_fines_by_parcel <- seq_range(train$total_fines_by_parcel, n = 10, pretty = TRUE, trim = 0.05)
+
+grid <- crossing(number_of_violations_by_parcel,
+                 total_fines_by_parcel)
+
+#have a look at the third model (among the k-fold validation models)
+grid <- grid %>% add_predictions(models[[9]])
+
+#plot of the predictions, for one of the models, 
+ggplot(grid) + geom_point(aes(x = number_of_violations_by_parcel, 
+                              y = total_fines_by_parcel, color = pred[,2] > 0.5))
+
+models[[4]]
+
+```
+
+Note that the simple decision-tree model is somewhat better than the logistic model at teasing out the positive instances, and somewhat less effective wit respect to the negative instances..
+
+We now add that calls to the improve_detroit_issues dataset to the model. Note that the improve detroit issues dataset does not contain data for 2013 or earlier.
+
+```{r}
+
+#note the possible issue types, and then restrict the set to include issues that would seem to be associated with blight in a particular building
+levels(as.factor(improve_detroit_issues$`Issue Type`))
+
+#we'll try to work with the folloiwng dataset, which has 
+improve_detroit_issues_property <- improve_detroit_issues %>%
+  filter(`Issue Type` %in% c("Residential Snow Removal Issue", "Running Water in a Home or Building", 
+                             "Curbside Solid Waste Issue",  "DPW - Debris Removal - DPW USE ONLY", 
+                             "Rodent Extermination - BSEED Only", "Squatters Issue"))
+
+#add the parcel geometry to the dataset with the the blight violation tallies
+blight_violation_tallies <- parcels_with_labels %>% select(geometry, parcelnum) %>% 
+  inner_join(blight_violation_tallies, by = "parcelnum")
+
+improve_detroit_issues_tallies <- improve_detroit_issues_property %>% 
+  st_join(blight_violation_tallies, join = st_within) %>% 
+  as.tibble() %>% select(-geometry) %>% count(parcelnum)
+
+#note the distribution of the tally numbers
+improve_detroit_issues_tallies %>% ggplot() +
+  geom_bar(aes(x = as.factor(n)))
+
+#add the tallies to the improve_detroit_issues_tallies set
+improve_detroit_and_violations_tallies <- blight_violation_tallies %>% as.data.frame() %>% 
+  select(-geometry) %>% left_join(improve_detroit_issues_tallies, by = "parcelnum") %>%
+  mutate(improve_issues_tallies = ifelse(is.na(n), 0, n)) %>% select(-n)
+
+rm(improve_detroit_issues_tallies)
+
+```
+
+We add this data to our models, and again try both decision-tree and logistic-regression methods.
+
+```{r}
+
+#separate the examples to be used for the training from the twenty percent of the examples to be withheld for final testing (remembering that we will do 10-fold cross validation over the training set)
+train <- improve_detroit_and_violations_tallies %>% filter(parcelnum %in% training_parcelnums)
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+
+#partition the training set into ten subsets, while maintaining a ballance between expamples labeled as blighted and examples not so labeled
+set.seed(294)
+k_folds <- caret::createFolds(train$blighted)
+
+formula <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + improve_issues_tallies
+
+models <- 1:10 %>% map(~ glm(formula, data = train[-k_folds[[.x]],], family = "binomial"))
+
+predictions <- 1:10 %>% map(~ predict.glm(models[[.x]], newdata = train[k_folds[[.x]],],
+                                      type = "response"))
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+```
+
+
+```{r}
+#separate the examples to be used for the training from the twenty percent of the examples to be withheld for final testing (remembering that we will do 10-fold cross validation over the training set)
+train <- improve_detroit_and_violations_tallies %>% filter(parcelnum %in% training_parcelnums)
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+train$blighted <- as.factor(train$blighted)
+
+#partition the training set into ten subsets, while maintaining a ballance between expamples labeled as blighted and examples not so labeled
+set.seed(294)
+k_folds <- caret::createFolds(train$blighted)
+
+#use the same formula as in the logistic model above
+models <- 1:10 %>% map(~ rpart(formula, data = train[-k_folds[[.x]],]))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+
+```
