@@ -39,6 +39,8 @@ improve_detroit_issues <- read_csv("./data/Improve_Detroit_Issues_3_19_2018.csv"
 completed_demolitions <- read_csv("./data/Detroit_Demolitions.csv",
                                   guess_max = 10^6)
 
+upcoming_demolitions <- read_csv("./data/Upcoming_Demolitions.csv")
+
 #the shapefile representing Detroit parcels, read as an sf data frame
 parcel_sf <- st_read("./data/Parcel Map")
 
@@ -48,6 +50,8 @@ parcel_sf <- parcel_sf %>% mutate(parcelnum = as.character(parcelnum))
 #downloaded from http://d3-d3.opendata.arcgis.com/datasets/383eb730952e470389f09617b5448026_0 on 04/13/2018: "Harded Hit Fund Areas, with Expansion"
 Hardest_Hit_Fund_Areas <- st_read("./data/Hardest_Hit_Fund_Areas_with_Expansion.kml", 
                                   crs = st_crs(parcel_sf))
+
+city_council_districts <- st_read("./data/City Council Districts")
 
 ```
 
@@ -102,6 +106,7 @@ improve_detroit_issues_split <- add_sf_point(improve_detroit_issues, "Location")
 
 completed_demolitions_split <- add_sf_point(completed_demolitions, "Location")
 
+upcoming_demolitions_split <- add_sf_point(upcoming_demolitions, "Location")
 ```
 
 We now consider the data for which we do not yet have position data, and complete the information as well as we reasonably can, using the Google API and a function, `geocode_pause`, that handles some of API's quirks.
@@ -361,13 +366,18 @@ rm(improve_detroit_issues_split, improve_detroit_issues_leftover_sf)
 
 ```{r}
 
-#create the other set of demolition information
+#create another set of demolition information
 completed_demolitions_sf <- completed_demolitions_split[[1]]
 
-#note that location information in completed_demolitions_sf is complete
+#note that location information in completed_demolitions_sf is complete (the dataframe for the examples with complete location information has zero elements)
 completed_demolitions_split[[2]]
 
-rm(completed_demolitions, completed_demolitions_split)
+#another set of demolition information
+upcoming_demolitions_sf <- upcoming_demolitions_split[[1]]
+
+upcoming_demolitions_split[[2]]
+
+rm(completed_demolitions, completed_demolitions_split, upcoming_demolitions, upcoming_demolitions_split)
 ```
 We begin the process of signing labels to the buildings: blighted or not blighted. Buildings will be represented by parcels that have or have had buildings on them, whether by being so represented as in the `parcels_sf` data frame as including structures or in the dismantle permits dataframe as having had a dismantle permit associated with it, thus suggesting that there *was* a building on the parcel. 
 
@@ -829,6 +839,19 @@ completed_in_fund_areas_parcelnum_join <- parcels_in_hardest_hit_areas %>%
                              filter(! rownumber %in% completed_in_fund_areas_parcel_spatial$rownumber)), 
              by = c("parcelnum" = "Parcel ID"))
 
+#add a row number to completed_demolitions_sf, so as to keep an account of which rows have been included in the following joins
+upcoming_demolitions_sf <- upcoming_demolitions_sf %>% mutate(rownumber = row_number())
+
+#inner spacial join of parcels_in_hardest_hit_areas and completed_demolitions_sf, on the basis containment of the point associated with the demolition dataset, in the parcel 
+upcoming_in_fund_areas_parcel_spatial <- parcels_in_hardest_hit_areas %>%
+  st_join(upcoming_demolitions_sf, st_contains, left = FALSE)
+
+#inner join of parcels_in_hardest_hit_areas and completed_demolitions_sf, on the basis of identify of parcel numbers, for those elements of completed_demolitions_sf that were not captured in the spatial join
+upcoming_in_fund_areas_parcelnum_join <- parcels_in_hardest_hit_areas %>%
+  inner_join(as.data.frame(upcoming_demolitions_sf %>% 
+                             filter(! rownumber %in% completed_in_fund_areas_parcel_spatial$rownumber)), 
+             by = c("parcelnum" = "Parcel ID"))
+
 #repeat the above three steps for the parcels that have dismantle permits associated with them
 dismantle_permits_sf <- dismantle_permits_sf %>% mutate(rownumber = row_number())
   
@@ -844,7 +867,9 @@ dismantle_permit_fund_areas_parcelnum_join <- parcels_in_hardest_hit_areas %>%
 blighted_parcels <- rbind(as.data.frame(completed_in_fund_areas_parcel_spatial) %>% select(parcelnum), 
                           as.data.frame(completed_in_fund_areas_parcelnum_join) %>% select(parcelnum),
                           as.data.frame(dismantle_permit_fund_areas_spatial) %>% select(parcelnum),
-                          as.data.frame(dismantle_permit_fund_areas_parcelnum_join) %>% select(parcelnum)) %>%
+                          as.data.frame(dismantle_permit_fund_areas_parcelnum_join) %>% select(parcelnum),
+                          as.data.frame(upcoming_in_fund_areas_parcel_spatial) %>% select(parcelnum), 
+                          as.data.frame(upcoming_in_fund_areas_parcelnum_join) %>% select(parcelnum)) %>%
   distinct(parcelnum)
 
 #data frame with the parcel numbers for all parcels in the hardest hit areas that have or have had at least one buiding on the parcel
@@ -860,7 +885,7 @@ labels <- parcels_set %>% mutate(blighted = ifelse(parcelnum %in% blighted_parce
 #note the ballance of blighted versus not-blighted labels.
 labels %>% count(blighted) %>% mutate(fraction = n / sum(n))
 
-rm(completed_in_fund_areas_parcel_spatial, completed_in_fund_areas_parcelnum_join, dismantle_permit_fund_areas_spatial, dismantle_permit_fund_areas_parcelnum_join, parcels_set, blighted_parcels, dismantle_permit_fund_areas_parcelnum_join, dismantle_permit_fund_areas_spatial, completed_in_fund_areas_parcelnum_join, completed_in_fund_areas_parcel_spatial, parcels_in_hardest_hit_areasparcels_in_hardest_hit_areasparcels_in_hardest_hit_areas)
+rm(completed_in_fund_areas_parcel_spatial, completed_in_fund_areas_parcelnum_join, dismantle_permit_fund_areas_spatial, dismantle_permit_fund_areas_parcelnum_join, parcels_set, blighted_parcels, dismantle_permit_fund_areas_parcelnum_join, dismantle_permit_fund_areas_spatial, completed_in_fund_areas_parcelnum_join, completed_in_fund_areas_parcel_spatial, parcels_in_hardest_hit_areasparcels_in_hardest_hit_areasparcels_in_hardest_hit_areas, upcoming_in_fund_areas_parcel_spatial, upcoming_in_fund_areas_parcelnum_join)
 
 ```
 
@@ -1182,25 +1207,49 @@ improve_detroit_and_violations_tallies <- parcels_with_labels %>% select(-blight
 
 improve_detroit_and_violations_tallies <- improve_detroit_and_violations_tallies %>% st_sf()
 
-distance <- set_units(100, "m")  #for crimes within 100 meters
+distance <- set_units(200, "m")  #for crimes within 100 meters
 
 #enlarge the parcel geometries by the amount specified in distance, so as to use a spacial join to count events occurring near the parcel
-tallies_with_crime <- improve_detroit_and_violations_tallies %>% 
+tallies_with_later_crime <- improve_detroit_and_violations_tallies %>% 
   st_transform(2253) %>% st_buffer(distance)
 
 #ggplot(improve_detroit_and_violations_tallies[100,]) + geom_sf() 
 
-tallies_with_crime <- tallies_with_crime %>%
+tallies_with_later_crime <- tallies_with_later_crime %>%
   st_join(crime_12062016_to_03192018 %>% st_transform(2253),
           join = st_contains)
 
 #count the number of recent recorded crimes within 500 meters, noting that every parcel has at least one
-tallies_with_crime <- tallies_with_crime %>% as.data.frame() %>% select(-geometry) %>% 
-  group_by(parcelnum) %>% summarize(recorded_crime_incidents = n())
+tallies_with_later_crime <- tallies_with_later_crime %>% as.data.frame() %>% select(-geometry) %>% 
+  group_by(parcelnum) %>% summarize(later_recorded_crime_incidents = n())
 
-tallies_with_crime <- tallies_with_crime %>%
-  inner_join(improve_detroit_and_violations_tallies, by = "parcelnum")
+#now tally the earlier crime incidents, by roughly repeating the last few steps
 
+#add the parcel geometry to the data we are using for modeling
+#tallies_with_earlier_crime <- parcels_with_labels %>% select(-blighted) %>%
+#  left_join(improve_detroit_and_violations_tallies, by = "parcelnum") %>% st_sf()
+
+#improve_detroit_and_violations_tallies <- improve_detroit_and_violations_tallies %>% st_sf()
+
+#enlarge the parcel geometries by the amount specified in distance, so as to use a spacial join to count events occurring near the parcel
+tallies_with_earlier_crime <- improve_detroit_and_violations_tallies %>% 
+  st_transform(2253) %>% st_buffer(distance)
+
+#ggplot(improve_detroit_and_violations_tallies[100,]) + geom_sf() 
+
+tallies_with_earlier_crime <- tallies_with_earlier_crime %>%
+  st_join(crime_to_12062016_sf %>% st_transform(2253),
+          join = st_contains)
+
+#count the number of recent recorded crimes within 500 meters, noting that every parcel has at least one
+tallies_with_earlier_crime <- tallies_with_earlier_crime %>% as.data.frame() %>% select(-geometry) %>% 
+  group_by(parcelnum) %>% summarize(earlier_recorded_crime_incidents = n())
+
+tallies_with_crime <- tallies_with_later_crime %>%
+  inner_join(improve_detroit_and_violations_tallies, by = "parcelnum") %>%
+  inner_join(tallies_with_earlier_crime, by = "parcelnum")
+
+rm(tallies_with_earlier_crime, tallies_with_later_crime)
 ```
 
 ```{r}
@@ -1215,7 +1264,7 @@ k_folds <- caret::createFolds(train$blighted)
 
 #n the number of reported crimtes
 formula <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
-  improve_issues_tallies + recorded_crime_incidents
+  improve_issues_tallies + later_recorded_crime_incidents + earlier_recorded_crime_incidents
 
 models <- 1:10 %>% map(~ glm(formula, data = train[-k_folds[[.x]],], family = "binomial"))
 
@@ -1301,19 +1350,266 @@ for (index in 1:10) {
 
 ```
 
+Now add some constant properties of the parcels to the models, to see if they improve the model fit.
+
 ```{r}
 
-tallies_with_building_type <- tallies_with_crime %>% as.data.frame() %>% select(-geometry) %>%
-  left_join(parcel_sf %>% as.data.frame() %>% select(parcelnum, building_s), by = "parcelnum")
+#add the parcel area, to see if it improves
+tallies_with_area <- tallies_with_crime %>% 
+  left_join(parcel_sf %>% as.data.frame() %>% select(parcelnum, total_acre), 
+            by = "parcelnum") %>% select(-geometry)
   
-tallies_with_building_type <- tallies_with_building_type %>% 
-  left_join(dismantle_permits_sf %>% as.data.frame() %>% select(`Parcel Number`, `Legal Use`),
-            by = c("parcelnum" = "Parcel Number"))
+#separate the examples to be used for the training from the twenty percent of the examples to be withheld for final testing (remembering that we will do 10-fold cross validation over the training set)
+train <- tallies_with_area %>% filter(parcelnum %in% training_parcelnums)
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
 
+#partition the training set into ten subsets, while maintaining a ballance between expamples labeled as blighted and examples not so labeled
+set.seed(294)
+k_folds <- caret::createFolds(train$blighted)
 
-#left_join(dismantle_permits_sf %>% as.data.frame() %>% select(`Parcel Number`, `Legal Use`), 
-#            by = c("parcelnum" = "Parcel Number"))
+#n the number of reported crimtes
+formula <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
+    improve_issues_tallies + earlier_recorded_crime_incidents + later_recorded_crime_incidents + 
+    total_acre
 
-#temp <- tallies_with_building_type %>% filter(is.na(building_s))
+models <- 1:10 %>% map(~ glm(formula, data = train[-k_folds[[.x]],], family = "binomial"))
+
+predictions <- 1:10 %>% map(~ predict.glm(models[[.x]], newdata = train[k_folds[[.x]],],
+                                      type = "response"))
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
 ```
+
+Try and test an rpart model
+
+```{r}
+
+#separate the examples to be used for the training from the twenty percent of the examples to be withheld for final testing (remembering that we will do 10-fold cross validation over the training set)
+train <- tallies_with_area %>% filter(parcelnum %in% training_parcelnums)
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+train$blighted <- as.factor(train$blighted)
+
+#partition the training set into ten subsets, while maintaining a ballance between expamples labeled as blighted and examples not so labeled
+set.seed(294)
+k_folds <- caret::createFolds(train$blighted)
+
+#use the same formula as with the glm model above
+models <- 1:10 %>% map(~ rpart(formula, data = train[-k_folds[[.x]],]))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+models[[9]]
+
+```
+
+Try and test a random forest model.
+
+```{r}
+#separate the examples to be used for the training from the twenty percent of the examples to be withheld for final testing (remembering that we will do 10-fold cross validation over the training set)
+train <- tallies_with_area %>% filter(parcelnum %in% training_parcelnums)
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+train$blighted <- as.factor(train$blighted)
+
+#partition the training set into ten subsets, while maintaining a ballance between expamples labeled as blighted and examples not so labeled
+set.seed(294)
+k_folds <- caret::createFolds(train$blighted)
+
+#use the same formula as with the glm and rpart models above
+models <- 1:10 %>% map(~ randomForest(formula, data = train[-k_folds[[.x]],]))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+```
+
+```{r}
+
+#add the parcel area, to see if it improves
+tallies_with_district <- tallies_with_area %>% 
+  left_join(parcel_sf %>% as.data.frame() %>% select(parcelnum, council_di), 
+            by = "parcelnum")
+  
+tallies_with_district$council_di <- as.character(tallies_with_district$council_di)
+
+district_recording_errors <- tallies_with_district %>% 
+  filter(! council_di %in% c("01", "02", "03", "04", "05", "06", "07"))
+
+district_recording_errors <- parcels_with_labels %>% select(parcelnum) %>%
+  inner_join(district_recording_errors, by = "parcelnum")
+
+district_recording_errors <- district_recording_errors %>% 
+  st_join(city_council_districts %>% select(districts), join = st_within)
+
+district_recording_errors <- district_recording_errors %>%
+  mutate(council_di = districts) %>% as.data.frame() %>% 
+  select(-districts, -geometry) %>% as.tibble()
+
+tallies_with_district <- tallies_with_district %>%
+  filter(council_di %in% c("01", "02", "03", "04", "05", "06", "07")) %>%
+  rbind(district_recording_errors)
+
+#with the obsevation that, for example, district 7 is currently represented by both of the strings "07" and "7", we make the representation constant
+tallies_with_district <- tallies_with_district %>%
+  mutate(council_di = as.integer(council_di)) %>%
+  mutate(council_di = as.factor(council_di))
+
+#separate the examples to be used for the training from the twenty percent of the examples to be withheld for final testing (remembering that we will do 10-fold cross validation over the training set)
+train <- tallies_with_district %>% filter(parcelnum %in% training_parcelnums)
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+train$blighted <- as.factor(train$blighted)
+
+#partition the training set into ten subsets, while maintaining a ballance between expamples labeled as blighted and examples not so labeled
+set.seed(294)
+k_folds <- caret::createFolds(train$blighted)
+
+formula <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
+    improve_issues_tallies + earlier_recorded_crime_incidents + 
+    later_recorded_crime_incidents + total_acre + council_di
+
+models <- 1:10 %>% map(~ rpart(formula, data = train[-k_folds[[.x]],]))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+models[[1]]
+
+```
+
+Now try random forest, with the dataset and formula above.
+
+```{r}
+
+#same formula as in rpart model above
+models <- 1:10 %>% map(~ randomForest(formula, data = train[-k_folds[[.x]],]))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+```
+
+Now add the frontage (from parcel data). I wouldn't expect this to add very much to the value of the model (given that we have already incuded area), but let's see.
+
+```{r}
+
+tallies_with_frontage <- tallies_with_district %>% 
+  left_join(parcel_sf %>% as.data.frame() %>% select(parcelnum, frontage), by = "parcelnum")
+
+#separate the examples to be used for the training from the twenty percent of the examples to be withheld for final testing (remembering that we will do 10-fold cross validation over the training set)
+train <- tallies_with_frontage %>% filter(parcelnum %in% training_parcelnums)
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+train$blighted <- as.factor(train$blighted)
+
+#partition the training set into ten subsets, while maintaining a ballance between expamples labeled as blighted and examples not so labeled
+set.seed(294)
+k_folds <- caret::createFolds(train$blighted)
+
+formula <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
+    improve_issues_tallies + earlier_recorded_crime_incidents + later_recorded_crime_incidents +
+    total_acre + council_di + frontage
+
+models <- 1:10 %>% map(~ rpart(formula, data = train[-k_folds[[.x]],]))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+models[[2]]
+
+
+```
+
+Random forest again:
+
+```{r}
+
+#same formula as in rpart model above
+models <- 1:10 %>% map(~ randomForest(formula, data = train[-k_folds[[.x]],]))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+```
+
 
