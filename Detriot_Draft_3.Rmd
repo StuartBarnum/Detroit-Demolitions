@@ -1122,9 +1122,9 @@ models[[4]]
 
 ```
 
-Note that the simple decision-tree model is somewhat better than the logistic model at teasing out the positive instances, and somewhat less effective wit respect to the negative instances..
+Note that the simple decision-tree model is somewhat better than the logistic model at teasing out the positive instances, and somewhat less effective with respect to the negative instances.
 
-We now add that calls to the improve_detroit_issues dataset to the model. Note that the improve detroit issues dataset does not contain data for 2013 or earlier.
+We now add the improve_detroit_issues dataset to the model. Note that the improve detroit issues dataset does not contain data for 2013 or earlier.
 
 ```{r}
 
