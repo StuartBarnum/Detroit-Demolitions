@@ -933,6 +933,7 @@ testing_parcelnums <- labels_balanced[-training_rows,]$parcelnum
 Having explored and cleaned the data and constructed a set of labels, we proceed to the construction of predictive models. The first step will be to add some properties to the set of labels.
 
 ```{r}
+library(lubridate)
 
 #add the parcel geometry to the labels
 parcels_with_labels <- parcel_sf %>% select(parcelnum) %>%
@@ -947,7 +948,8 @@ temp <- blight_violations_sf %>% as.data.frame() %>% select(-geometry) %>%
 temp
 rm(temp)
 
-head(blight_violations_sf) 
+blight_violations_sf <- blight_violations_sf %>% 
+  filter(mdy(`Violation Date`) > mdy("05/31/2009"))
 
 #have a look at the distribution of violators recorded in blight_violations_sf for (as indicated by `Violator ID`), noting that the following construction contains zero rows (Violator ID thus doesn't seem to be useful)
 violator_distribution <- blight_violations_sf %>% 
@@ -1135,19 +1137,28 @@ levels(as.factor(improve_detroit_issues$`Issue Type`))
 improve_detroit_issues_property <- improve_detroit_issues %>%
   filter(`Issue Type` %in% c("Residential Snow Removal Issue", "Running Water in a Home or Building", 
                              "Curbside Solid Waste Issue",  "DPW - Debris Removal - DPW USE ONLY", 
-                             "Rodent Extermination - BSEED Only", "Squatters Issue"))
+                             "Rodent Extermination - BSEED Only", "Squatters Issue", "Illegal Dump Sites"))
 
 #add the parcel geometry to the dataset with the the blight violation tallies
 blight_violation_tallies <- parcels_with_labels %>% select(geometry, parcelnum) %>% 
   inner_join(blight_violation_tallies, by = "parcelnum")
 
+#expand the parcel geometry to include all points within 200 meters of the parcel
+library(units)
+distance <- set_units(200, "m")
+blight_violation_tallies <- blight_violation_tallies %>% 
+  st_transform(2253) %>% st_buffer(distance)
+
 improve_detroit_issues_tallies <- improve_detroit_issues_property %>% 
+  st_transform(2253) %>%
   st_join(blight_violation_tallies, join = st_within) %>% 
   as.tibble() %>% select(-geometry) %>% count(parcelnum)
 
 #note the distribution of the tally numbers
-improve_detroit_issues_tallies %>% ggplot() +
-  geom_bar(aes(x = as.factor(n)))
+improve_detroit_issues_tallies %>% filter(n < 200) %>% ggplot(aes(x = n)) +
+  geom_histogram(bins = 50) + labs(y = "count within 200 meters") +
+  ggtitle("Improve Detroit Issues Associated with Properties") + 
+  theme(plot.title = element_text(hjust = 0.5))
 
 #add the tallies to the improve_detroit_issues_tallies set
 improve_detroit_and_violations_tallies <- blight_violation_tallies %>% as.data.frame() %>% 
@@ -1670,7 +1681,7 @@ We look at the effect of parcels in the region with no buildings on them. Many o
 
 ```{r}
 
-distance <- set_units(200, "m")  #for crimes within 100 meters
+distance <- set_units(200, "m")  #for crimes within 200 meters
 
 vacant_parcel_buffers <- parcel_sf %>% select(parcelnum) %>% 
   inner_join(tallies_with_frontage, by = "parcelnum") %>%
@@ -1935,7 +1946,7 @@ for (index in 1:10) {
   print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
 }
 
-models[[9]]
+models[[3]]
 
 ```
 
@@ -1984,5 +1995,15 @@ for (index in 1:10) {
 }
 
 models[[3]]
+
+```
+
+Save to file file we are using for modeling to disk, for use in other scripts
+
+```{r}
+
+write_rds(tallies_with_nearby_violations, "calculated_tallies.rds")
+
+write_rds(training_parcelnums, "training_parcelnums.rds")
 
 ```
