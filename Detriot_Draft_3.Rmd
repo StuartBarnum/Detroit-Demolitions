@@ -3,6 +3,7 @@ title: "Blight Predictions for Detroit"
 output:
   html_document:
     df_print: paged
+  pdf_document: default
 ---
 
 In this project, I will attempt to predict whether, for any building within a set of identified buildings in Detroit, whether that building will be be targeted for demolition. Potential predictors include citations related to the building, crime, and complaints concerning the building related to blight. I have more-or-less completed the data-cleaning, and I am in the process of associating the various predictors with the buildings. So far I am using about 3GB of data downloaded from `https://data.detroitmi.gov/`.
@@ -509,7 +510,9 @@ rm(duplicate_parcel_numbers_in_parcel_data, selection_vector, unique_parcels, ro
 
 ```
 
-```{r, eval = FALSE}
+
+
+```{r}
 #(note that eval is set to false, to avoid rerunning this code every time I implement "run all chunks")
 
 #investagate a few of the cases by road map 
@@ -525,7 +528,8 @@ raod_map <- function(sf_shape) {
   ggmap(detroit_gg)
 }
 
-raod_map(parcel_sf %>% filter(parcelnum == "13000116.003"))
+street_map_1 <- raod_map(parcel_sf %>% filter(parcelnum == "13000116.003"))
+street_map_1 + ggtitle("Parcel 13000116.003") + theme(plot.title = element_text(hjust = 0.5))
 
 #investigate a few of the cases by satelite map
 satellite_map <- function(sf_shape) {
@@ -540,11 +544,13 @@ satellite_map <- function(sf_shape) {
   ggmap(detroit_gg)
 }
 
-satellite_map(parcel_sf %>% filter(parcelnum == "13000116.003"))
+street_map_2 <- satellite_map(parcel_sf %>% filter(parcelnum == "13000116.003"))
+street_map_2 + ggtitle("Parcel 13000116.003") + theme(plot.title = element_text(hjust = 0.5))
 
 ```
 
 We begin the process of creating a list of buildings from the parcels data. One of the issues to consider is number of buildings on the parcel. Should we restrict our analysis to those parcels that have only one building? In any case, two columns in `parcel_sf` bear on this aspect: `building_s` and `num_buildi`.  
+
 ```{r}
 
 #exploration of the numbers of buildings on parcels
@@ -1274,11 +1280,12 @@ earlier_crime_sf <- crime_to_12062016_sf %>%
   mutate(INCIDENTDATE = mdy(str_sub(INCIDENTDATE, 1, 8))) %>%
   filter(INCIDENTDATE > mdy("12/31/2014")) %>%
   mutate(general_type = case_when(
-  CATEGORY %in% c("AGGRAVATED ASSAULT", "ROBBERY", "ASSAULT", "HOMICIDE") ~ "Violent Crime",
-  CATEGORY %in% c("BURGLARY", "STOLEN PROPERTY", "STOLEN VEHICLE", "DAMAGE TO PROPERTY", 
+  CATEGORY %in% c("AGGRAVATED ASSAULT", "ASSAULT", "HOMICIDE", "ROBBERY", 
+                  "ARSON", "DAMAGE TO PROPERTY") ~ "Violent Crime",
+  CATEGORY %in% c("BURGLARY", "STOLEN PROPERTY", "STOLEN VEHICLE",
                   "OTHER BURGLARY", "LARCENY") ~ "Property Crime",
-  CATEGORY %in% c("SEX OFFENSES", "SOLICITATION") ~ "Sex Offences",
-  CATEGORY %in% c("VAGRANCY (OTHER)") ~ "Vagrancy"))
+  CATEGORY %in% c("SEX OFFENSES", "SOLICITATION", "VAGRANCY (OTHER)") ~ "Nuiscance Offences"))
+
   
 #enlarge the parcel geometries by the amount specified in distance, so as to use a spacial join to count events occurring near the parcel
 tallies_with_earlier_property_crime <- improve_detroit_and_violations_tallies %>% 
@@ -1291,8 +1298,6 @@ tallies_with_earlier_property_crime <- tallies_with_earlier_property_crime %>%
 #count the number of recent recorded crimes within 200 meters, noting that every parcel has at least one
 tallies_with_earlier_property_crime <- tallies_with_earlier_property_crime %>% as.data.frame() %>% select(-geometry) %>% 
   group_by(parcelnum) %>% summarize(earlier_property_crime_incidents = n())
-
-
 
 #enlarge the parcel geometries by the amount specified in distance, so as to use a spacial join to count events occurring near the parcel
 tallies_with_earlier_violent_crime <- improve_detroit_and_violations_tallies %>% 
@@ -1307,12 +1312,27 @@ tallies_with_earlier_violent_crime <- tallies_with_earlier_violent_crime %>%
   as.data.frame() %>% select(-geometry) %>% 
   group_by(parcelnum) %>% summarize(earlier_violent_crime_incidents = n())
 
+#enlarge the parcel geometries by the amount specified in distance, so as to use a spacial join to count events occurring near the parcel
+tallies_with_earlier_nuiscance_crime <- improve_detroit_and_violations_tallies %>% 
+  st_transform(2253) %>% st_buffer(distance)
+
+tallies_with_earlier_nuiscance_crime <- tallies_with_earlier_nuiscance_crime %>%
+  st_join(earlier_crime_sf %>% filter(general_type == "Nuiscance Offences") %>% st_transform(2253),
+          join = st_contains)
+
+#count the number of recent recorded crimes within 200 meters, noting that every parcel has at least one
+tallies_with_earlier_nuiscance_crime <- tallies_with_earlier_nuiscance_crime %>% 
+  as.data.frame() %>% select(-geometry) %>% 
+  group_by(parcelnum) %>% summarize(earlier_nuiscance_offences = n())
+
+
 tallies_with_crime <- tallies_with_later_crime %>%
   inner_join(improve_detroit_and_violations_tallies, by = "parcelnum") %>%
   inner_join(tallies_with_earlier_property_crime, by = "parcelnum") %>%
-  inner_join(tallies_with_earlier_violent_crime, by = "parcelnum")
+  inner_join(tallies_with_earlier_violent_crime, by = "parcelnum") %>%
+  inner_join(tallies_with_earlier_nuiscance_crime, by = "parcelnum")
 
-rm(tallies_with_earlier_property_crime, tallies_with_later_crime, tallies_with_earlier_violent_crime)
+#rm(tallies_with_earlier_property_crime, tallies_with_later_crime, tallies_with_earlier_violent_crime)
 ```
 
 
@@ -1330,7 +1350,7 @@ k_folds <- caret::createFolds(train$blighted)
 #n the number of reported crimtes
 formula <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
   improve_issues_tallies + earlier_property_crime_incidents + 
-  earlier_violent_crime_incidents
+  earlier_violent_crime_incidents + earlier_nuiscance_offences
 
 models <- 1:10 %>% map(~ glm(formula, data = train[-k_folds[[.x]],], family = "binomial"))
 
@@ -1436,7 +1456,7 @@ k_folds <- caret::createFolds(train$blighted)
 #n the number of reported crimtes
 formula <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
   improve_issues_tallies + earlier_property_crime_incidents + 
-  earlier_violent_crime_incidents + total_acre
+  earlier_violent_crime_incidents + total_acre + earlier_nuiscance_offences
 
 models <- 1:10 %>% map(~ glm(formula, data = train[-k_folds[[.x]],], family = "binomial"))
 
@@ -1565,7 +1585,7 @@ k_folds <- caret::createFolds(train$blighted)
 
 formula <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
   improve_issues_tallies + earlier_property_crime_incidents + 
-  earlier_violent_crime_incidents + total_acre + council_di
+  earlier_violent_crime_incidents + total_acre + council_di + earlier_nuiscance_offences
 
 models <- 1:10 %>% map(~ rpart(formula, data = train[-k_folds[[.x]],]))
 
@@ -1630,7 +1650,7 @@ k_folds <- caret::createFolds(train$blighted)
 
 formula <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
   improve_issues_tallies + earlier_property_crime_incidents + 
-  earlier_violent_crime_incidents + total_acre + council_di + frontage
+  earlier_violent_crime_incidents + total_acre + council_di + frontage + earlier_nuiscance_offences
 
 models <- 1:10 %>% map(~ rpart(formula, data = train[-k_folds[[.x]],]))
 
@@ -1718,7 +1738,8 @@ k_folds <- caret::createFolds(train$blighted)
 
 formula <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
   improve_issues_tallies + earlier_property_crime_incidents + 
-  earlier_violent_crime_incidents + total_acre + council_di + frontage + num_vacant_parcels
+  earlier_violent_crime_incidents + total_acre + council_di + frontage + num_vacant_parcels +
+  earlier_nuiscance_offences
 
 models <- 1:10 %>% map(~ rpart(formula, data = train[-k_folds[[.x]],]))
 
@@ -1769,7 +1790,7 @@ With the idea that blighted buildings may tend to come in clusters, we may guess
 ```{r}
 library(lubridate)
 
-#identify the earlier completed demolutions and put the results into a form that can be combined with the dismantle permits resutls
+#identify the earlier completed demolotions and put the results into a form that can be combined with the dismantle permits results
 earlier_completed_demolitions_sf <- completed_demolitions_sf %>% 
   mutate(Date = `Demolition Date`, parcelnum = `Parcel ID`) %>%
   select(Date, parcelnum) %>% filter(Date < mdy("06/01/2016"))
@@ -1832,7 +1853,7 @@ k_folds <- caret::createFolds(train$blighted)
 formula <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
   improve_issues_tallies + earlier_property_crime_incidents + 
   earlier_violent_crime_incidents + total_acre + council_di + frontage + num_vacant_parcels +
-  num_nearby_blighted_parcels
+  num_nearby_blighted_parcels + earlier_nuiscance_offences
 
 models <- 1:10 %>% map(~ rpart(formula, data = train[-k_folds[[.x]],]))
 
@@ -1927,7 +1948,7 @@ k_folds <- caret::createFolds(train$blighted)
 formula <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
   improve_issues_tallies + earlier_property_crime_incidents + 
   earlier_violent_crime_incidents + total_acre + council_di + frontage + num_vacant_parcels +
-  num_nearby_blighted_parcels + num_violations_nearby_parcels
+  num_nearby_blighted_parcels + num_violations_nearby_parcels + earlier_nuiscance_offences
 
 models <- 1:10 %>% map(~ rpart(formula, data = train[-k_folds[[.x]],]))
 
@@ -1999,6 +2020,19 @@ models[[3]]
 ```
 
 Save to file file we are using for modeling to disk, for use in other scripts
+
+```{r, eval = FALSE}
+
+tallies_with_vagrancy_at_property <- tallies_with_nearby_violations %>% 
+  inner_join(parcel_sf %>% select(parcelnum, geometry), by = "parcelnum") %>%
+  st_sf() %>% st_join(earlier_crime_sf %>% filter(CATEGORY == "VAGRANCY (OTHER)"), 
+                      join = st_contains, left = FALSE) %>% 
+  group_by(parcelnum) %>% summarize(arson_incidents_at_property = n())
+
+rm(tallies_with_vagrancy_at_property, tallies_with_arson_at_property)
+
+```
+
 
 ```{r}
 

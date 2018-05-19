@@ -1,0 +1,721 @@
+---
+title: "Detroit_models_from_tallies"
+author: "Stuart Barnum"
+date: "5/11/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Packages used repeatedly:
+
+```{r}
+library(tidyverse)
+library(rpart)
+library(randomForest)
+
+```
+
+
+Data and other information from `Detroit_Draft_3.Rmd`:
+
+```{r}
+
+complete_tally_set <- read_rds("calculated_tallies.rds")
+
+complete_formula <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
+  improve_issues_tallies + earlier_property_crime_incidents + 
+  earlier_violent_crime_incidents + total_acre + council_di + frontage + num_vacant_parcels +
+  num_nearby_blighted_parcels + num_violations_nearby_parcels + earlier_nuiscance_offences
+
+training_parcelnums <- read_rds("training_parcelnums.rds")
+
+```
+
+
+```{r}
+
+#separate the examples to be used for the training from the twenty percent of the examples to be withheld for final testing (remembering that we will do 10-fold cross validation over the training set)
+train <- complete_tally_set %>% filter(parcelnum %in% training_parcelnums)
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+train$blighted <- as.factor(train$blighted)
+
+#partition the training set into ten subsets, while maintaining a ballance between expamples labeled as blighted and examples not so labeled
+set.seed(451)
+k_folds <- caret::createFolds(train$blighted)
+
+models <- 1:10 %>% map(~ rpart(complete_formula, data = train[-k_folds[[.x]],],
+                               method = "class", control = rpart.control(cp = 0.008)))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+models[[3]]
+
+```
+
+```{r}
+
+models <- 1:10 %>% map(~ glm(complete_formula, data = train[-k_folds[[.x]],], family = "binomial"))
+
+predictions <- 1:10 %>% map(~ predict.glm(models[[.x]], newdata = train[k_folds[[.x]],],
+                                      type = "response"))
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+models[[9]]
+
+```
+
+Now try random forest:
+
+```{r}
+
+models <- 1:10 %>% map(~ randomForest(complete_formula, 
+                                      data = train[-k_folds[[.x]],], ntree = 2000))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+models[[3]]
+
+```
+
+Consider the pearson correlations coeficients (point biserials):
+
+```{r}
+
+correlations <- complete_tally_set %>% 
+  select(-parcelnum) %>%
+  mutate(council_di = as.numeric(council_di)) %>%
+  cor %>%
+  as.data.frame() %>%
+  select(blighted)
+
+correlations
+
+```
+
+Cut out the two variables with the weakest correlation:
+
+```{r}
+
+#the complete formula, again
+formula <- blighted ~ number_of_violations_by_parcel + total_fines_by_parcel + earlier_property_crime_incidents + earlier_violent_crime_incidents + total_acre + council_di + frontage + num_vacant_parcels + num_nearby_blighted_parcels + num_violations_nearby_parcels + sum_fines_nearby_parcels +
+earlier_nuiscance_offences
+
+#the formula with some weak variables removed
+formula <- blighted ~ number_of_violations_by_parcel + total_fines_by_parcel + improve_issues_tallies + earlier_property_crime_incidents + earlier_violent_crime_incidents + total_acre + council_di + frontage + num_vacant_parcels + num_nearby_blighted_parcels + num_violations_nearby_parcels + earlier_nuiscance_offences
+
+models <- 1:10 %>% map(~ rpart(formula, data = train[-k_folds[[.x]],]))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+models[[2]]
+
+
+```
+
+```{r} 
+models <- 1:10 %>% map(~ glm(formula, data = train[-k_folds[[.x]],], family = "binomial"))
+
+predictions <- 1:10 %>% map(~ predict.glm(models[[.x]], newdata = train[k_folds[[.x]],],
+                                      type = "response"))
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+models[[2]]
+
+```
+
+```{r}
+
+models <- 1:10 %>% map(~ randomForest(formula, data = train[-k_folds[[.x]],]))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+models[[3]]
+
+```
+
+
+1) root 3276 1602 0 (0.5109890 0.4890110)  
+  2) num_nearby_blighted_parcels< 1.5 1540  462 0 (0.7000000 0.3000000)  
+    4) num_vacant_parcels< 50.5 1289  309 0 (0.7602793 0.2397207) *
+    5) num_vacant_parcels>=50.5 251   98 1 (0.3904382 0.6095618) *
+  3) num_nearby_blighted_parcels>=1.5 1736  596 1 (0.3433180 0.6566820) *
+  
+
+Partition the dataset according to whether `num_nearby_blighted_parcels` < 1.5 and consider the Pearson correlation coeficient (point biserials) within each of the elements of the partition:
+  
+```{r}
+
+low_num_blighted_parcels <- train %>% filter(num_nearby_blighted_parcels < 1.5)
+
+correlations <- low_num_blighted_parcels %>% 
+  select(-parcelnum) %>%
+  mutate(council_di = as.numeric(council_di), 
+         blighted = as.numeric(blighted)) %>%
+  cor %>%
+  as.data.frame() %>%
+  select(blighted)
+correlations
+
+higher_num_blighted_parcels <- train %>% filter(num_nearby_blighted_parcels >= 1.5)
+
+correlations <- higher_num_blighted_parcels %>% 
+  select(-parcelnum) %>%
+  mutate(council_di = as.numeric(council_di),
+         blighted = as.numeric(blighted)) %>%
+  cor %>%
+  as.data.frame() %>%
+  select(blighted)
+correlations
+
+```
+
+```{r}
+
+formula <- blighted ~ number_of_violations_by_parcel + total_fines_by_parcel + earlier_property_crime_incidents + earlier_violent_crime_incidents + total_acre + council_di + frontage + num_vacant_parcels + num_nearby_blighted_parcels + num_violations_nearby_parcels + sum_fines_nearby_parcels +
+earlier_nuiscance_offences
+
+
+#k-fold models for parcels with a low number of nearby blighted parcels
+models_1 <- 1:10 %>% map(~ randomForest(formula, data = train[-k_folds[[.x]],] %>%
+                                        filter(num_nearby_blighted_parcels < 1.5)))
+
+#k-fold models for parcels with a high number of nearby blighted parcels
+models_2 <- 1:10 %>% map(~ randomForest(formula, data = train[-k_folds[[.x]],] %>%
+                                        filter(num_nearby_blighted_parcels >= 1.5)))
+
+predictions_1 <- 1:10 %>% map(~ predict(models_1[[.x]], newdata = train[k_folds[[.x]],] %>%
+                                          filter(num_nearby_blighted_parcels < 1.5), 
+                                        type = "class"))
+
+predictions_1 <- 1:10 %>% map(~as.numeric(predictions_1[[.x]]) - 1)
+
+predictions_2 <- 1:10 %>% map(~ predict(models_2[[.x]], newdata = train[k_folds[[.x]],] %>%
+                                          filter(num_nearby_blighted_parcels >= 1.5), 
+                                        type = "class"))
+
+predictions_2 <- 1:10 %>% map(~as.numeric(predictions_2[[.x]]) - 1)
+
+accuracies_1 <- 1:10 %>% 
+  map(~ as.numeric(predictions_1[[.x]] == (train[k_folds[[.x]],] %>%
+                                          filter(num_nearby_blighted_parcels < 1.5))$blighted))
+
+accuracies_2 <- 1:10 %>% 
+  map(~ as.numeric(as.numeric(! predictions_2[[.x]] < 0.5) == (train[k_folds[[.x]],] %>%
+                                          filter(num_nearby_blighted_parcels >= 1.5))$blighted))
+
+#summary statistics over the models
+mean(unlist(accuracies_1))
+mean(unlist(accuracies_2))
+
+#grand mean
+mean(c(unlist(accuracies_1), unlist(accuracies_2)))
+
+```
+
+We use the following decision tree, which all of the rpart models in our k-fold-cross-validation models have used, to capture the data
+
+1) root 3276 1602 0 (0.5109890 0.4890110)  
+  2) num_nearby_blighted_parcels< 1.5 1540  462 0 (0.7000000 0.3000000)  
+    4) num_vacant_parcels< 50.5 1289  309 0 (0.7602793 0.2397207) *
+    5) num_vacant_parcels>=50.5 251   98 1 (0.3904382 0.6095618) *
+  3) num_nearby_blighted_parcels>=1.5 1736  596 1 (0.3433180 0.6566820) *
+
+```{r}
+
+library(rlang)
+
+condition_1 <- expr(num_nearby_blighted_parcels < 1.5 & num_vacant_parcels < 50.5)
+
+condition_2 <- expr(num_nearby_blighted_parcels < 1.5 & num_vacant_parcels >= 50.5)
+
+condition_3 <- expr(num_nearby_blighted_parcels >= 1.5)
+
+cat("Case 1\n")
+condition_1
+
+correlations <- train %>% filter(!!condition_1) %>% 
+  select(-parcelnum) %>%
+  mutate(council_di = as.numeric(council_di), 
+         blighted = as.numeric(blighted)) %>%
+  cor %>%
+  as.data.frame() %>%
+  select(blighted)
+correlations
+
+cat("\nCase 2\n")
+condition_2
+
+correlations <- train %>% filter(!!condition_2) %>% 
+  select(-parcelnum) %>%
+  mutate(council_di = as.numeric(council_di), 
+         blighted = as.numeric(blighted)) %>%
+  cor %>%
+  as.data.frame() %>%
+  select(blighted)
+correlations
+
+cat("\nCase 3\n")
+condition_3
+
+correlations <- train %>% filter(!!condition_3) %>% 
+  select(-parcelnum) %>%
+  mutate(council_di = as.numeric(council_di), 
+         blighted = as.numeric(blighted)) %>%
+  cor %>%
+  as.data.frame() %>%
+  select(blighted)
+correlations
+
+```
+
+```{r}
+
+formula_1 <- blighted ~ number_of_violations_by_parcel + total_fines_by_parcel + improve_issues_tallies +
+  earlier_property_crime_incidents + earlier_violent_crime_incidents + council_di +
+  num_violations_nearby_parcels + earlier_nuiscance_offences
+
+formula_2 <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
+  improve_issues_tallies + earlier_property_crime_incidents + 
+  earlier_violent_crime_incidents + council_di + frontage + num_vacant_parcels +
+  num_nearby_blighted_parcels + num_violations_nearby_parcels
+
+formula_3 <- blighted ~ number_of_violations_by_parcel + total_fines_by_parcel + improve_issues_tallies +
+  earlier_property_crime_incidents + earlier_violent_crime_incidents + total_acre + council_di + frontage +
+  num_vacant_parcels + num_violations_nearby_parcels + sum_fines_nearby_parcels
+
+#formula_1 <- formula
+#formula_2 <- formula
+#formula_3 <- formula
+
+models_1 <- 1:10 %>% map(~ randomForest(formula_1, data = train[-k_folds[[.x]],] %>%
+                                        filter(!!condition_1), ntree = 2000))
+
+models_2 <- 1:10 %>% map(~ randomForest(formula_2, data = train[-k_folds[[.x]],] %>%
+                                        filter(!!condition_2), ntree = 2000))
+
+models_3 <- 1:10 %>% map(~ randomForest(formula_3, data = train[-k_folds[[.x]],] %>%
+                                        filter(!!condition_3), ntree = 2000))
+
+predictions_1 <- 1:10 %>% map(~ predict(models_1[[.x]], newdata = train[k_folds[[.x]],] %>%
+                                          filter(!!condition_1), 
+                                        type = "class"))
+
+predictions_2 <- 1:10 %>% map(~ predict(models_2[[.x]], newdata = train[k_folds[[.x]],] %>%
+                                          filter(!!condition_2), 
+                                        type = "class"))
+
+predictions_3 <- 1:10 %>% map(~ predict(models_3[[.x]], newdata = train[k_folds[[.x]],] %>%
+                                          filter(!!condition_3), 
+                                        type = "class"))
+
+truth_1 <- 1:10 %>% map(~ (train[k_folds[[.x]],] %>% filter(!!condition_1))$blighted)
+
+truth_2 <- 1:10 %>% map(~ (train[k_folds[[.x]],] %>% filter(!!condition_2))$blighted)
+
+truth_3 <- 1:10 %>% map(~ (train[k_folds[[.x]],] %>% filter(!!condition_3))$blighted)
+
+accuracies_1 <- 1:10 %>% map(~ (as.numeric(predictions_1[[.x]] == truth_1[[.x]])))
+
+accuracies_2 <- 1:10 %>% map(~ (as.numeric(predictions_2[[.x]] == truth_2[[.x]])))
+
+accuracies_3 <- 1:10 %>% map(~ (as.numeric(predictions_3[[.x]] == truth_3[[.x]])))
+
+mean(unlist(accuracies_1))
+mean(unlist(accuracies_2))
+mean(unlist(accuracies_3))
+
+#grand mean
+mean(c(unlist(accuracies_1), unlist(accuracies_2), unlist(accuracies_3)))
+cat("\n")
+
+#grand confusion matrix
+table(truth = c(unlist(truth_1), unlist(truth_2), unlist(truth_3)) - 1,
+      pred = c(unlist(predictions_1), unlist(predictions_2), unlist(predictions_3)) - 1)
+
+
+
+```
+
+```{r}
+
+ada_train <- train
+ada_test <- test
+formula <- complete_formula
+iterations <- 6
+tree_depth <- 5
+min_cp <- 0.005
+
+```
+
+
+```{r}
+
+#returns a prediction on the "test" dataset
+demolition_adaboost <- function(ada_train, ada_test, formula, iterations, tree_depth, min_cp) {
+  
+  num_rows <- nrow(ada_train)
+  
+  #initialize the weights to be applied to each example in the training set
+  ada_train$wts <- 1/num_rows         
+  
+  models <- list() #initializing the list of rpart models
+  pred_weights <- list() #initiallizing a sum to be taken over the iterations in the for loop
+  adjustment_factors <- list() #initializing a list of the factors used to adjust the example weights
+  pred_list <- list()  #predictions on the test dataset from EACH tree (NOT the sum)
+  for (index in 1:iterations) {
+    
+    #In this implementation of Adaboost, the test set is sampled with replacement, and then the 
+    #weights (as prescribed in the Adaboost meta-algorithm) are used to determine the relative import
+    #of the respective datapoints in an rpart implementation on the sample. I have also experimented with 
+    #using the weights to determine the relative probabilities for selection in the sample. However, the
+    #performance (accuracy in cross-validation) was rather disapointing, with many of the weights rather         #quickly converging to zero. 
+    
+    ada_resample <- sample_n(ada_train, num_rows, replace = TRUE)
+    
+    #the weights for the rpart model
+    wts <- ada_resample$wts
+    
+    model <- rpart::rpart(formula, data = ada_resample, 
+                   method = "class", weights = wts,
+                   control = rpart.control(maxdepth = tree_depth,
+                                           cp = min_cp))
+      
+    #predict over the entire training set
+    prediction <- predict(model, newdata = ada_train, type = "class")
+    ada_train$Prediction <- prediction
+      
+    #The predictions on the proper test set are calculated here:
+    pred <- predict(model, newdata = ada_test, type="class")
+    ada_test$Prediction <- pred
+    
+    ####ada_test <- arrange(ada_test, parcelnum)
+    pred_list[[index]] <- as.numeric(ada_test$Prediction) - 1  #stores prediction for the test set
+   
+    #We now handle the calculation of the adjustment factor and its application to the example weights
+   
+     wrong_cases <- ada_train[ada_train$blighted != ada_train$Prediction,]
+    sum_weights_misclassified <- sum(wrong_cases$wts)  #epsilon
+    adjustment_factor <- 
+      sqrt(sum_weights_misclassified / (1 - sum_weights_misclassified))  #beta
+    correct_cases <- ada_train[ada_train$blighted == ada_train$Prediction,]
+    
+    #apply the adjustment factors to the weights
+    ada_train <- transform(ada_train,
+                      wts = ifelse(parcelnum %in% correct_cases$parcelnum,
+                                        wts * adjustment_factor, wts / adjustment_factor))
+    #renormalize the weights
+    ada_train <- transform(ada_train,
+      wts = wts/sum(wts))
+    
+    #save the weight on the model(s) in this iteration, the model(s), and the adjustment factor
+    #in a list (for both calculating the adaboost prediction and for examining after running the
+    #program)
+    pred_weights[[index]] <- log((1-sum_weights_misclassified)/sum_weights_misclassified)
+    models[[index]] <- model
+    adjustment_factors[[index]] <- adjustment_factor
+    }
+  
+  #Apply the weighted models to the test data, to derive our predictions
+  sum_weighted_predictions <- 0 #initialize the weighted sum of the predictions 
+ 
+  #initialize a list in which the i'th element is the the adaboost prediction for i iterations
+  prediction_list <- list() 
+  accuracy_list <- list()
+  #confusion_matrix_list <- list()
+  for (index in 1:iterations) {
+    
+    pred <- pred_list[[index]] 
+    sum_weighted_predictions <- 
+      sum_weighted_predictions + (pred - 0.5)*pred_weights[[index]]
+    prediction_list[[index]] <- as.numeric(sum_weighted_predictions > 0)
+    accuracy_list[[index]] <- mean(as.numeric(prediction_list[[index]] == ada_test$blighted))
+    }
+  
+  predictions_df <- tibble(parcelnum = ada_test$parcelnum, truth = ada_test$blighted)
+  for (index in 1:iterations) {
+    predictions_df[[index + 2]] <- prediction_list[[index]]
+  }
+  
+  #return a comprehensive set of information
+  return(list(predictions = predictions_df, 
+              accuracies = accuracy_list, 
+              rpart_models = models, 
+              prediction_weights = pred_weights,
+              example_weights = ada_train$wts,
+              adjustment_factors = adjustment_factors,
+              predicted_parcels = ada_test$parcelnum))
+  }
+
+```
+
+```{r}
+
+ada_iterations <- 8000
+tree_depth <- 1
+minimum_cp <- 0.006
+
+library(doParallel)
+library(foreach)
+cl <- makePSOCKcluster(6)
+registerDoParallel(cl)
+model_info_list <- 
+  foreach(index = 1:10,  
+          .packages = c("tidyverse", "rpart")) %dopar% { 
+            
+  cross_train <- train[-k_folds[[index]],]
+  cross_test <- train[k_folds[[index]],]
+  
+  #the information to be added to model_info_list, at this iteration of parallel loop:
+  
+  prediction_and_info <- 
+    demolition_adaboost(cross_train, cross_test, complete_formula, ada_iterations, 
+                        tree_depth, minimum_cp)
+  }
+stopCluster(cl)
+rm(cl)
+
+accuracy_sum <- rep(0, length(model_info_list[[1]]$accuracies))
+for(index in 1:10) {
+  accuracy_sum <- accuracy_sum + 
+    unlist(model_info_list[[index]]$accuracies) * length(k_folds[[index]]) 
+}
+accuracy_averages <- accuracy_sum / nrow(train)
+rm(accuracy_sum)
+
+names(accuracy_averages) <- 1:length(accuracy_averages)
+
+accuracy_averages[1:1000]
+
+model_info_list[[3]]$example_weights
+
+#rm(model_info_list)
+gc()
+```
+
+demolition_adaboost <- function(ada_train, ada_test, formula, iterations, tree_depth, min_cp)
+
+```{r}
+
+#(train, test, formula, iterations, tree_depth, min_cp)
+
+complete_tally_set$blighted <- as.factor(complete_tally_set$blighted)
+
+train <- complete_tally_set %>% filter(parcelnum %in% training_parcelnums)
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+
+test <- complete_tally_set %>% filter(! parcelnum %in% training_parcelnums)
+
+model <- demolition_adaboost(train, test, complete_formula, 10000, 1, 0.006)
+
+unlist(model$accuracies)[1:0000]
+
+```
+
+#return a comprehensive set of information
+  return(list(predictions = predictions_df, 
+              accuracies = accuracy_list, 
+              rpart_models = models, 
+              prediction_weights = pred_weights,
+              example_weights = ada_train$wts,
+              adjustment_factors = adjustment_factors,
+              predicted_parcels = ada_test$parcelnum))
+
+```{r}
+
+#set.seed(451)
+full_k_folds <- caret::createFolds(complete_tally_set$blighted)
+#(with the default of 10 folds)
+
+ada_iterations <- 2000
+tree_depth <- 1
+minimum_cp <- 0
+
+library(doParallel)
+library(foreach)
+cl <- makePSOCKcluster(6)
+registerDoParallel(cl)
+model_info_list <- 
+  foreach(index = 1:10,  
+          .packages = c("tidyverse", "rpart")) %dopar% { 
+            
+  cross_train <- complete_tally_set[-full_k_folds[[index]],]
+  cross_test <- complete_tally_set[full_k_folds[[index]],]
+  
+  #the information to be added to model_info_list, at this iteration of parallel loop:
+  
+  prediction_and_info <- 
+    demolition_adaboost(cross_train, cross_test, complete_formula, ada_iterations, 
+                        tree_depth, minimum_cp)
+  }
+stopCluster(cl)
+rm(cl)
+
+accuracy_sum <- rep(0, length(model_info_list[[1]]$accuracies))
+for(index in 1:10) {
+  accuracy_sum <- accuracy_sum + 
+    unlist(model_info_list[[index]]$accuracies) * length(k_folds[[index]]) 
+}
+accuracy_averages <- accuracy_sum / nrow(train)
+rm(accuracy_sum)
+
+max(accuracy_averages)
+which.max(accuracy_averages)
+
+names(accuracy_averages) <- 1:length(accuracy_averages)
+
+#3000
+accuracy_averages[1:1000]
+#389-390
+#486-495
+#772-793
+
+max(accuracy_averages)
+#.72613
+
+#rm(model_info_list)
+gc()
+
+combined_predictions_df <- model_info_list[[1]]$predictions
+for (index in 2:10) {
+  combined_predictions_df <- rbind(combined_predictions_df, 
+                                   model_info_list[[index]]$predictions)
+}
+
+predictions <- combined_predictions_df %>% select(350:700) %>%
+  rowMeans()
+
+predictions <- round(predictions)
+
+mean(as.numeric(predictions == combined_predictions_df$truth))
+```
+
+```{r}
+
+#ensure that the outcome variable is of type claass
+complete_tally_set$blighted <- as.factor(complete_tally_set$blighted)
+
+#set.seed(555)
+full_k_folds <- caret::createFolds(complete_tally_set$blighted)
+#(with the default of 10 folds)
+
+library(randomForest)
+
+library(doParallel)
+library(foreach)
+cl <- makePSOCKcluster(6)
+registerDoParallel(cl)
+randomForest_models <- 
+  foreach(index = 1:10,  
+          .packages = c("tidyverse", "randomForest")) %dopar% { 
+
+  randomForest(formula, 
+              complete_tally_set[-full_k_folds[[index]],], 
+              ntree = 1000)  
+            
+  }
+stopCluster(cl)
+rm(cl)            
+      
+predictions <- 1:10 %>% map(~ predict(randomForest_models[[.x]], 
+                                      newdata = complete_tally_set[full_k_folds[[.x]],], 
+                                      type = "class"))
+
+#predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(predictions[[.x]] == complete_tally_set[full_k_folds[[.x]],]$blighted))
+
+#mean accuracy for each fold
+accuracies
+
+#mean accuracy and standard deviation over the folds
+mean(unlist(accuracies))
+sd(unlist(accuracies))
+
+#confusion matrices for the models
+for(index in 1:10) {
+print(table(pred = predictions[[index]], 
+      truth = complete_tally_set[full_k_folds[[index]],]$blighted))
+}
+
+randomForest_models[[4]]
+
+```
+
