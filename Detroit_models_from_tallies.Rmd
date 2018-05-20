@@ -1,7 +1,7 @@
 ---
 title: "Detroit_models_from_tallies"
 author: "Stuart Barnum"
-date: "5/11/2018"
+date: "5/18/2018"
 output: html_document
 ---
 
@@ -34,6 +34,7 @@ training_parcelnums <- read_rds("training_parcelnums.rds")
 
 ```
 
+We partition the dataset as per k-fold cross validation, and train rpart models on the respective portions
 
 ```{r}
 
@@ -47,7 +48,7 @@ set.seed(451)
 k_folds <- caret::createFolds(train$blighted)
 
 models <- 1:10 %>% map(~ rpart(complete_formula, data = train[-k_folds[[.x]],],
-                               method = "class", control = rpart.control(cp = 0.008)))
+                               method = "class", control = rpart.control(cp = 0.003)))
 
 predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
 predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
@@ -67,6 +68,8 @@ for (index in 1:10) {
 models[[3]]
 
 ```
+
+Now try glm
 
 ```{r}
 
@@ -91,9 +94,86 @@ models[[9]]
 
 ```
 
+Now try support vector machines, without normalizing the variables.
+
+```{r}
+library(e1071)
+
+#separate the examples to be used for the training from the twenty percent of the examples to be withheld for final testing (remembering that we will do 10-fold cross validation over the training set)
+train <- complete_tally_set %>% filter(parcelnum %in% training_parcelnums)
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+train$blighted <- as.factor(train$blighted)
+
+#partition the training set into ten subsets, while maintaining a ballance between expamples labeled as blighted and examples not so labeled
+set.seed(451)
+k_folds <- caret::createFolds(train$blighted)
+
+models <- 1:10 %>% map(~ svm(complete_formula, data = train[-k_folds[[.x]],]))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],]))
+
+accuracies <- 1:10 %>% 
+  map(~ mean(unlist(predictions[[.x]] == train[k_folds[[.x]],]$blighted)))
+
+#summary statistics over the models
+mean(unlist(accuracies))
+sd(unlist(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]]), 
+              truth = train[k_folds[[index]],]$blighted))
+}
+
+#All of the rpart models in the k-fold cross-checking contained only one split---on 
+#the total amount of fines related to blight on the parcel, as in the following.
+models[[3]]
+```
+
+Now try support vector machines, after normalizing the numerical variables
+
+```{r}
+
+train$blighted <- as.factor(train$blighted)
+
+#cut out the non-numeric columns, scale the numeric columns, and then put the non-numerica columns back in
+train_svm <- train %>% select(-parcelnum, -blighted, -council_di) %>% scale() %>% as.tibble() %>% 
+  mutate(parcelnum = train$parcelnum, blighted = train$blighted, council_di = train$council_di)
+
+set.seed(451)
+k_folds <- caret::createFolds(train_svm$blighted)
+
+models <- 1:10 %>% map(~ svm(complete_formula, data = train_svm[-k_folds[[.x]],]))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train_svm[k_folds[[.x]],]))
+
+accuracies <- 1:10 %>% 
+  map(~ mean(unlist(predictions[[.x]] == train_svm[k_folds[[.x]],]$blighted)))
+
+#summary statistics over the models
+mean(unlist(accuracies))
+sd(unlist(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]]), 
+              truth = train_svm[k_folds[[index]],]$blighted))
+}
+
+#All of the rpart models in the k-fold cross-checking contained only one split---on 
+#the total amount of fines related to blight on the parcel, as in the following.
+models[[3]]
+
+
+
+```
+
+
+
 Now try random forest:
 
 ```{r}
+library(randomForest)
 
 models <- 1:10 %>% map(~ randomForest(complete_formula, 
                                       data = train[-k_folds[[.x]],], ntree = 2000))
@@ -117,7 +197,158 @@ models[[3]]
 
 ```
 
-Consider the pearson correlations coeficients (point biserials):
+Now try adaboost. The first step is to define an adaboost function, in terms of rpart.
+
+```{r}
+
+#returns a prediction on the "test" dataset
+demolition_adaboost <- function(ada_train, ada_test, formula, iterations, tree_depth, min_cp) {
+  
+  num_rows <- nrow(ada_train)
+  
+  #initialize the weights to be applied to each example in the training set
+  ada_train$wts <- 1/num_rows         
+  
+  models <- list() #initializing the list of rpart models
+  pred_weights <- list() #initiallizing a sum to be taken over the iterations in the for loop
+  adjustment_factors <- list() #initializing a list of the factors used to adjust the example weights
+  pred_list <- list()  #predictions on the test dataset from EACH tree (NOT the sum)
+  for (index in 1:iterations) {
+    
+    #In this implementation of Adaboost, the test set is sampled with replacement, and then the 
+    #weights (as prescribed in the Adaboost meta-algorithm) are used to determine the relative import
+    #of the respective datapoints in an rpart implementation on the sample. I have also experimented with 
+    #using the weights to determine the relative probabilities for selection in the sample. However, the
+    #performance (accuracy in cross-validation) was rather disapointing, with many of the weights rather                    #quickly converging  to zero. 
+    
+    ada_resample <- sample_n(ada_train, num_rows, replace = TRUE)
+    
+    #the weights for the rpart model
+    wts <- ada_resample$wts
+    
+    model <- rpart::rpart(formula, data = ada_resample, 
+                   method = "class", weights = wts,
+                   control = rpart.control(maxdepth = tree_depth,
+                                           cp = min_cp))
+      
+    #predict over the entire training set
+    prediction <- predict(model, newdata = ada_train, type = "class")
+    ada_train$Prediction <- prediction
+      
+    #The predictions on the proper test set are calculated here:
+    pred <- predict(model, newdata = ada_test, type="class")
+    ada_test$Prediction <- pred
+    
+    ####ada_test <- arrange(ada_test, parcelnum)
+    pred_list[[index]] <- as.numeric(ada_test$Prediction) - 1  #stores prediction for the test set
+   
+    #We now handle the calculation of the adjustment factor and its application to the example weights
+   
+     wrong_cases <- ada_train[ada_train$blighted != ada_train$Prediction,]
+    sum_weights_misclassified <- sum(wrong_cases$wts)  #epsilon
+    adjustment_factor <- 
+      sqrt(sum_weights_misclassified / (1 - sum_weights_misclassified))  #beta
+    correct_cases <- ada_train[ada_train$blighted == ada_train$Prediction,]
+    
+    #apply the adjustment factors to the weights
+    ada_train <- transform(ada_train,
+                      wts = ifelse(parcelnum %in% correct_cases$parcelnum,
+                                        wts * adjustment_factor, wts / adjustment_factor))
+    #renormalize the weights
+    ada_train <- transform(ada_train,
+      wts = wts/sum(wts))
+    
+    #save the weight on the model(s) in this iteration, the model(s), and the adjustment factor
+    #in a list (for both calculating the adaboost prediction and for examining after running the
+    #program)
+    pred_weights[[index]] <- log((1-sum_weights_misclassified)/sum_weights_misclassified)
+    models[[index]] <- model
+    adjustment_factors[[index]] <- adjustment_factor
+    }
+  
+  #Apply the weighted models to the test data, to derive our predictions
+  sum_weighted_predictions <- 0 #initialize the weighted sum of the predictions 
+ 
+  #initialize a list in which the i'th element is the the adaboost prediction for i iterations
+  prediction_list <- list() 
+  accuracy_list <- list()
+  #confusion_matrix_list <- list()
+  for (index in 1:iterations) {
+    
+    pred <- pred_list[[index]] 
+    sum_weighted_predictions <- 
+      sum_weighted_predictions + (pred - 0.5)*pred_weights[[index]]
+    prediction_list[[index]] <- as.numeric(sum_weighted_predictions > 0)
+    accuracy_list[[index]] <- mean(as.numeric(prediction_list[[index]] == ada_test$blighted))
+    }
+  
+  predictions_df <- tibble(parcelnum = ada_test$parcelnum, truth = ada_test$blighted)
+  for (index in 1:iterations) {
+    predictions_df[[index + 2]] <- prediction_list[[index]]
+  }
+  
+  #return a comprehensive set of information
+  return(list(predictions = predictions_df, 
+              accuracies = accuracy_list, 
+              rpart_models = models, 
+              prediction_weights = pred_weights,
+              example_weights = ada_train$wts,
+              adjustment_factors = adjustment_factors,
+              predicted_parcels = ada_test$parcelnum))
+  }
+
+```
+
+We now apply the function for training and k-fold cross validation, using a parallel loop for the cross-validation. My various implementations of this approach to the training data has suggested that the adaboost model is most-predictive at between 800 and 1200 boosting iterations. However, for any number of iterations, the accuracy of the models varies. I thus used the average of the predictions with the range from 800 to 1200, rounded to 0 or 1.
+```{r}
+
+ada_iterations <- 3000
+tree_depth <- 1
+minimum_cp <- 0.006
+
+library(doParallel)
+library(foreach)
+cl <- makePSOCKcluster(6)
+registerDoParallel(cl)
+model_info_list <- 
+  foreach(index = 1:10,  
+          .packages = c("tidyverse", "rpart")) %dopar% { 
+            
+  cross_train <- train[-k_folds[[index]],]
+  cross_test <- train[k_folds[[index]],]
+  
+  #the information to be added to model_info_list, at this iteration of parallel loop:
+  
+  prediction_and_info <- 
+    demolition_adaboost(cross_train, cross_test, complete_formula, ada_iterations, 
+                        tree_depth, minimum_cp)
+  }
+stopCluster(cl)
+rm(cl)
+
+combined_predictions_df <- model_info_list[[1]]$predictions
+for (index in 2:10) {
+  combined_predictions_df <- rbind(combined_predictions_df, 
+                                   model_info_list[[index]]$predictions)
+}
+
+predictions <- combined_predictions_df %>% select(800:1200) %>%
+  rowMeans()
+
+predictions <- round(predictions)
+
+mean(as.numeric(predictions == combined_predictions_df$truth))
+```
+
+```{r}
+
+rm(model_info_list)
+gc()
+
+```
+
+
+Consider the Pearson correlations coefficients (point biserials):
 
 ```{r}
 
@@ -143,7 +374,8 @@ earlier_nuiscance_offences
 #the formula with some weak variables removed
 formula <- blighted ~ number_of_violations_by_parcel + total_fines_by_parcel + improve_issues_tallies + earlier_property_crime_incidents + earlier_violent_crime_incidents + total_acre + council_di + frontage + num_vacant_parcels + num_nearby_blighted_parcels + num_violations_nearby_parcels + earlier_nuiscance_offences
 
-models <- 1:10 %>% map(~ rpart(formula, data = train[-k_folds[[.x]],]))
+models <- 1:10 %>% map(~ rpart(formula, data = train[-k_folds[[.x]],], 
+                               control = rpart.control(cp = 0.005)))
 
 predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
 predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
@@ -187,29 +419,6 @@ models[[2]]
 
 ```
 
-```{r}
-
-models <- 1:10 %>% map(~ randomForest(formula, data = train[-k_folds[[.x]],]))
-
-predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
-predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
-
-accuracies <- 1:10 %>% 
-  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
-
-#summary statistics over the models
-mean(as.numeric(accuracies))
-sd(as.numeric(accuracies))
-
-#confusion matrices for the models
-for (index in 1:10) {
-  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
-}
-
-models[[3]]
-
-```
-
 
 1) root 3276 1602 0 (0.5109890 0.4890110)  
   2) num_nearby_blighted_parcels< 1.5 1540  462 0 (0.7000000 0.3000000)  
@@ -218,7 +427,7 @@ models[[3]]
   3) num_nearby_blighted_parcels>=1.5 1736  596 1 (0.3433180 0.6566820) *
   
 
-Partition the dataset according to whether `num_nearby_blighted_parcels` < 1.5 and consider the Pearson correlation coeficient (point biserials) within each of the elements of the partition:
+Partition the dataset according to whether `num_nearby_blighted_parcels` < 1.5 and consider the Pearson correlation coefficient (point biserials) within each of the elements of the partition:
   
 ```{r}
 
@@ -245,6 +454,8 @@ correlations <- higher_num_blighted_parcels %>%
 correlations
 
 ```
+
+We try partitioning the dataset according one of the more predictive variables, then running random forest on each of the two subsets.
 
 ```{r}
 
@@ -289,13 +500,15 @@ mean(c(unlist(accuracies_1), unlist(accuracies_2)))
 
 ```
 
-We use the following decision tree, which all of the rpart models in our k-fold-cross-validation models have used, to capture the data
+Consider the following decision tree, which forms the rpart model when the complexity parameter is set relatively high.
 
 1) root 3276 1602 0 (0.5109890 0.4890110)  
   2) num_nearby_blighted_parcels< 1.5 1540  462 0 (0.7000000 0.3000000)  
     4) num_vacant_parcels< 50.5 1289  309 0 (0.7602793 0.2397207) *
     5) num_vacant_parcels>=50.5 251   98 1 (0.3904382 0.6095618) *
   3) num_nearby_blighted_parcels>=1.5 1736  596 1 (0.3433180 0.6566820) *
+
+We partition our data according to the end-nodes in our decision tree, than then train a random forest model on each of the three subsets specified by the end nodes.
 
 ```{r}
 
@@ -413,191 +626,12 @@ table(truth = c(unlist(truth_1), unlist(truth_2), unlist(truth_3)) - 1,
 
 ```
 
-```{r}
-
-ada_train <- train
-ada_test <- test
-formula <- complete_formula
-iterations <- 6
-tree_depth <- 5
-min_cp <- 0.005
-
-```
-
+Having trained a model on the complete training set and then testing it on the 15% of the data that was withheld for final testing, I achieved an accuracy of 75%. As I was somewhat skeptical as to whether this figure would be typical, I tried tried k-fold cross testing over the entire balanced dataset.
 
 ```{r}
 
-#returns a prediction on the "test" dataset
-demolition_adaboost <- function(ada_train, ada_test, formula, iterations, tree_depth, min_cp) {
-  
-  num_rows <- nrow(ada_train)
-  
-  #initialize the weights to be applied to each example in the training set
-  ada_train$wts <- 1/num_rows         
-  
-  models <- list() #initializing the list of rpart models
-  pred_weights <- list() #initiallizing a sum to be taken over the iterations in the for loop
-  adjustment_factors <- list() #initializing a list of the factors used to adjust the example weights
-  pred_list <- list()  #predictions on the test dataset from EACH tree (NOT the sum)
-  for (index in 1:iterations) {
-    
-    #In this implementation of Adaboost, the test set is sampled with replacement, and then the 
-    #weights (as prescribed in the Adaboost meta-algorithm) are used to determine the relative import
-    #of the respective datapoints in an rpart implementation on the sample. I have also experimented with 
-    #using the weights to determine the relative probabilities for selection in the sample. However, the
-    #performance (accuracy in cross-validation) was rather disapointing, with many of the weights rather         #quickly converging to zero. 
-    
-    ada_resample <- sample_n(ada_train, num_rows, replace = TRUE)
-    
-    #the weights for the rpart model
-    wts <- ada_resample$wts
-    
-    model <- rpart::rpart(formula, data = ada_resample, 
-                   method = "class", weights = wts,
-                   control = rpart.control(maxdepth = tree_depth,
-                                           cp = min_cp))
-      
-    #predict over the entire training set
-    prediction <- predict(model, newdata = ada_train, type = "class")
-    ada_train$Prediction <- prediction
-      
-    #The predictions on the proper test set are calculated here:
-    pred <- predict(model, newdata = ada_test, type="class")
-    ada_test$Prediction <- pred
-    
-    ####ada_test <- arrange(ada_test, parcelnum)
-    pred_list[[index]] <- as.numeric(ada_test$Prediction) - 1  #stores prediction for the test set
-   
-    #We now handle the calculation of the adjustment factor and its application to the example weights
-   
-     wrong_cases <- ada_train[ada_train$blighted != ada_train$Prediction,]
-    sum_weights_misclassified <- sum(wrong_cases$wts)  #epsilon
-    adjustment_factor <- 
-      sqrt(sum_weights_misclassified / (1 - sum_weights_misclassified))  #beta
-    correct_cases <- ada_train[ada_train$blighted == ada_train$Prediction,]
-    
-    #apply the adjustment factors to the weights
-    ada_train <- transform(ada_train,
-                      wts = ifelse(parcelnum %in% correct_cases$parcelnum,
-                                        wts * adjustment_factor, wts / adjustment_factor))
-    #renormalize the weights
-    ada_train <- transform(ada_train,
-      wts = wts/sum(wts))
-    
-    #save the weight on the model(s) in this iteration, the model(s), and the adjustment factor
-    #in a list (for both calculating the adaboost prediction and for examining after running the
-    #program)
-    pred_weights[[index]] <- log((1-sum_weights_misclassified)/sum_weights_misclassified)
-    models[[index]] <- model
-    adjustment_factors[[index]] <- adjustment_factor
-    }
-  
-  #Apply the weighted models to the test data, to derive our predictions
-  sum_weighted_predictions <- 0 #initialize the weighted sum of the predictions 
- 
-  #initialize a list in which the i'th element is the the adaboost prediction for i iterations
-  prediction_list <- list() 
-  accuracy_list <- list()
-  #confusion_matrix_list <- list()
-  for (index in 1:iterations) {
-    
-    pred <- pred_list[[index]] 
-    sum_weighted_predictions <- 
-      sum_weighted_predictions + (pred - 0.5)*pred_weights[[index]]
-    prediction_list[[index]] <- as.numeric(sum_weighted_predictions > 0)
-    accuracy_list[[index]] <- mean(as.numeric(prediction_list[[index]] == ada_test$blighted))
-    }
-  
-  predictions_df <- tibble(parcelnum = ada_test$parcelnum, truth = ada_test$blighted)
-  for (index in 1:iterations) {
-    predictions_df[[index + 2]] <- prediction_list[[index]]
-  }
-  
-  #return a comprehensive set of information
-  return(list(predictions = predictions_df, 
-              accuracies = accuracy_list, 
-              rpart_models = models, 
-              prediction_weights = pred_weights,
-              example_weights = ada_train$wts,
-              adjustment_factors = adjustment_factors,
-              predicted_parcels = ada_test$parcelnum))
-  }
-
-```
-
-```{r}
-
-ada_iterations <- 8000
-tree_depth <- 1
-minimum_cp <- 0.006
-
-library(doParallel)
-library(foreach)
-cl <- makePSOCKcluster(6)
-registerDoParallel(cl)
-model_info_list <- 
-  foreach(index = 1:10,  
-          .packages = c("tidyverse", "rpart")) %dopar% { 
-            
-  cross_train <- train[-k_folds[[index]],]
-  cross_test <- train[k_folds[[index]],]
-  
-  #the information to be added to model_info_list, at this iteration of parallel loop:
-  
-  prediction_and_info <- 
-    demolition_adaboost(cross_train, cross_test, complete_formula, ada_iterations, 
-                        tree_depth, minimum_cp)
-  }
-stopCluster(cl)
-rm(cl)
-
-accuracy_sum <- rep(0, length(model_info_list[[1]]$accuracies))
-for(index in 1:10) {
-  accuracy_sum <- accuracy_sum + 
-    unlist(model_info_list[[index]]$accuracies) * length(k_folds[[index]]) 
-}
-accuracy_averages <- accuracy_sum / nrow(train)
-rm(accuracy_sum)
-
-names(accuracy_averages) <- 1:length(accuracy_averages)
-
-accuracy_averages[1:1000]
-
-model_info_list[[3]]$example_weights
-
-#rm(model_info_list)
-gc()
-```
-
-demolition_adaboost <- function(ada_train, ada_test, formula, iterations, tree_depth, min_cp)
-
-```{r}
-
-#(train, test, formula, iterations, tree_depth, min_cp)
-
+#ensure that the outcome variable is of type claass
 complete_tally_set$blighted <- as.factor(complete_tally_set$blighted)
-
-train <- complete_tally_set %>% filter(parcelnum %in% training_parcelnums)
-#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
-
-test <- complete_tally_set %>% filter(! parcelnum %in% training_parcelnums)
-
-model <- demolition_adaboost(train, test, complete_formula, 10000, 1, 0.006)
-
-unlist(model$accuracies)[1:0000]
-
-```
-
-#return a comprehensive set of information
-  return(list(predictions = predictions_df, 
-              accuracies = accuracy_list, 
-              rpart_models = models, 
-              prediction_weights = pred_weights,
-              example_weights = ada_train$wts,
-              adjustment_factors = adjustment_factors,
-              predicted_parcels = ada_test$parcelnum))
-
-```{r}
 
 #set.seed(451)
 full_k_folds <- caret::createFolds(complete_tally_set$blighted)
@@ -605,7 +639,7 @@ full_k_folds <- caret::createFolds(complete_tally_set$blighted)
 
 ada_iterations <- 2000
 tree_depth <- 1
-minimum_cp <- 0
+minimum_cp <- 0.006
 
 library(doParallel)
 library(foreach)
@@ -627,30 +661,22 @@ model_info_list <-
 stopCluster(cl)
 rm(cl)
 
-accuracy_sum <- rep(0, length(model_info_list[[1]]$accuracies))
-for(index in 1:10) {
-  accuracy_sum <- accuracy_sum + 
-    unlist(model_info_list[[index]]$accuracies) * length(k_folds[[index]]) 
-}
-accuracy_averages <- accuracy_sum / nrow(train)
-rm(accuracy_sum)
+#max(accuracy_averages)
+#which.max(accuracy_averages)
 
-max(accuracy_averages)
-which.max(accuracy_averages)
-
-names(accuracy_averages) <- 1:length(accuracy_averages)
+#names(accuracy_averages) <- 1:length(accuracy_averages)
 
 #3000
-accuracy_averages[1:1000]
+#accuracy_averages[1:1000]
 #389-390
 #486-495
 #772-793
 
-max(accuracy_averages)
+#max(accuracy_averages)
 #.72613
 
 #rm(model_info_list)
-gc()
+#gc()
 
 combined_predictions_df <- model_info_list[[1]]$predictions
 for (index in 2:10) {
@@ -658,13 +684,29 @@ for (index in 2:10) {
                                    model_info_list[[index]]$predictions)
 }
 
-predictions <- combined_predictions_df %>% select(350:700) %>%
+#for (index in 3:ncol(combined_predictions_df)) {
+#  print(c(index - 2, mean(combined_predictions_df$truth == combined_predictions_df[[index]])))
+#}
+
+predictions <- combined_predictions_df %>% select(900:1100) %>%
   rowMeans()
 
 predictions <- round(predictions)
 
 mean(as.numeric(predictions == combined_predictions_df$truth))
+
 ```
+
+Remove the information returned by the parallel loop, which includes each of the rpart models that were generated as part of adaboost.
+
+```{r}
+
+rm(model_info_list)
+gc()
+
+```
+
+Now look at random forest over the complete balanced set.
 
 ```{r}
 
