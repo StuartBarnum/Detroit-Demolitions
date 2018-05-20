@@ -42,13 +42,57 @@ summary(complete_tally_set)
 
 ```
 
-Further details about this dataset (or example, the manner in which the crime-incident data was dived into violent crimes, property crimes, and nuiscance crimes), including the code that was used in its construction, can be found at https://stuartbarnum.github.io/Detroit-Demolitions/Detriot_Draft_3.html.      In the end, because our analysis is restricted to dismantle permits and demolitions after May of 2016, the variable `later_recorded_crime_incents` was not used in our models. 
+Further details about this dataset (for example, the manner in which the crime-incident data was divided into violent crimes, property crimes, and nuiscance crimes), including the code that was used in its construction from the raw data, can be found at https://stuartbarnum.github.io/Detroit-Demolitions/Detriot_Draft_3.html. In the end, because our analysis is restricted to dismantle permits and demolitions after May of 2016, the variable `later_recorded_crime_incents` was not used in our models. I should also note that, as I built-up the models, I did not treat all of the incidents in each of the datasets the same. For example, I assumed that complaints from, say, neighbors about failure to keep up a building would have a clear association with blight on the property for which the complaint was made, whereas complaints for failure of the city to fill-in potholes in a certain area may have a less clear connection with blight. Likewise, although it is difficult to make the distinction in a fully satisfactory way, I created separate variables for property crime and violent crime. And in fact, in many of my decision-tree models, violent crime had a week but positive association with blight, whereas property crime had a weak but negative assocaition with blight. 
 
 #### Models
+For the modelling, I removed 15% of the data, to be reserved for a final check on our models. I then used the `createFolds` function from the `caret` package to partition the remaining data into 10 subsets, for k-fold cross checking. I constructed a number of models as I built-up the tally set, beginging with both decision-tree models using `rpart` and logistic regression models using `glm`, on the the numbers of blight violations for each parcel and the total among of fines for blight violations for each parcel. The initial decision-tree models on these two variables achieved an accuracy of rougly 60% percent, while the logistic regression models achieved an accuracy of 58%. Both of these model-types suggested that fine totals for each parcel provided a somewhat better predictor than number of violations for each parcel. Both of the model-types were notably poor predictors in the case of positive instances (buildings that were blighted), as the following reconstruction, which includes confusion matrices for the k-fold cross-checking, indicates (actual blight corresponds to truth = 1). 
 
+```{r}
+library(rpart)
 
+#the parcel numbers for the examples that were not reserved for final testing
+training_parcelnums <- read_rds("training_parcelnums.rds")
 
+#separate the examples to be used for the training from the fifteen percent of 
+#the examples to be withheld for final testing
+train <- complete_tally_set %>% filter(parcelnum %in% training_parcelnums)
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+train$blighted <- as.factor(train$blighted)
 
+#partition the training set into ten subsets, while maintaining a ballance between 
+#expamples labeled as blighted and examples not so labeled
+set.seed(294)
+k_folds <- caret::createFolds(train$blighted)
 
+models <- 1:10 %>% map(~ rpart(blighted ~ total_fines_by_parcel + 
+                                 number_of_violations_by_parcel,
+                               data = train[-k_folds[[.x]],]))
 
-In addition to the usual tasks of data cleaning, three fundamental challenges must be addressed before any predictive models are created. First, we construct a list buildings to be used in our models. This list will be based on the parcels of property on which the buildings stand. Essentially, the list of buildings will be a modified subset of all of the property parcels in Detroit: those that have or have had at least one building and satisfy a number of other constraints (perhaps including the constraint that there be only one building on the parcel). Second, we construct a set of labels---"blighted" or "not blighted"---to be assigned to each of the buildings. A building will be assigned one of these two labels on the basis of whether it is or was likely to be demolished. Third, we need an operational means of associating the various other blight-related aspects, such as crime rates and blight-related citations, with specific buildings. Although some of these associations will be made by means of parcel numbers, the primary means of association will be location (latitude and longitude) data, associated with the building by means of the `sf` (simple features) function `st_join`.
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], 
+                                      type = "class"))
+
+accuracies <- 1:10 %>% 
+  map(~ mean(unlist(predictions[[.x]] == train[k_folds[[.x]],]$blighted)))
+
+#summary statistics over the models
+mean(unlist(accuracies))
+sd(unlist(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]]), 
+              truth = train[k_folds[[index]],]$blighted))
+}
+
+#All of the rpart models in the k-fold cross-checking contained only one split---on 
+#the total amount of fines related to blight on the parcel, as in the following.
+models[[3]]
+
+```
+
+As more variables were added to the tally dataset, I also applied random forest (using the `randomForest` package) and, finally, adaboost (using my own implementation in R), and support vector machines (using the `e1071` package). After the tally datset was complete, I attempted to tune the models by changing the values of some of the parameters, such as the complexity parameter associated with the rpart function. In the end, most of the improvement in accuracy as I worked on this project was with the introduction of variables concerning blight at nearby parcels, espeically in the case of the number of nearby vacant lots (other than the parcel for which prediction is taking place) and the number of nearby blighted parcels (other than the parcel for which prediction is taking place). The decision-tree models achieved an average accuracy, accross the the ten models constructed in the k-fold cross checking of 71% with the with the complexity parameter set at 0.003 (reduced from the default value of 0.01). Similar calculations of average accuracies for random forest and adaboost models yielded 0.73. The accuracy of 0.73 in the adaboost was achieved with the trees ( the "weak" classifiers) in the form of decision stumps---trees that contained at most one split, and in some cases no splits at all. Adaboost over trees containing more than one split resulted in accuracies at least somewhat less than this.
+
+I should emphasize that the counts of nearby buildings that were blighted did not include the building for which we were predicting. (Otherwise, the analysis would be circular.) Neverthess, I tried running some of the approaches to model-building without using the variable for nearby blight. For the decision-tree models, this resulted in an average accuracy, over the 10 models contructing during k-fold cross checking, of 0.70. 
+
+#### Final thoughts and analysis
+
