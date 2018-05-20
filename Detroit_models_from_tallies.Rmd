@@ -63,6 +63,38 @@ models[[3]]
 
 ```
 
+Although I believe it is useful to see a quantiative relationship between blight in one building and blight in nearby builings, some may obect to the use of blight to predict blight.  (To to clear, the count for number of nearby blighted parcels does not include the parcel for which we are making predictions.) As can be seen below, removing this variable results in a model with an accuracy of roughly 1.5 percentage points lower.
+
+```{r}
+
+complete_formula_minus_nearby_blight <- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
+  improve_issues_tallies + earlier_property_crime_incidents + 
+  earlier_violent_crime_incidents + total_acre + council_di + frontage + num_vacant_parcels +
+  num_violations_nearby_parcels + earlier_nuiscance_offences
+
+models <- 1:10 %>% map(~ rpart(complete_formula_minus_nearby_blight, data = train[-k_folds[[.x]],],
+                               method = "class", control = rpart.control(cp = 0.003)))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = train[k_folds[[index]],]$blighted))
+}
+
+models[[3]]
+
+```
+
+
 Now try glm
 
 ```{r}
@@ -137,7 +169,16 @@ train_svm <- train %>% select(-parcelnum, -blighted, -council_di) %>% scale() %>
 set.seed(451)
 k_folds <- caret::createFolds(train_svm$blighted)
 
-models <- 1:10 %>% map(~ svm(complete_formula, data = train_svm[-k_folds[[.x]],]))
+#remove the only categorical variable we are using as a predictor: council_di
+complete_formula_minus_council_di <- blighted ~ total_fines_by_parcel + 
+    number_of_violations_by_parcel + 
+    improve_issues_tallies + earlier_property_crime_incidents + 
+    earlier_violent_crime_incidents + total_acre +
+    frontage + num_vacant_parcels + num_nearby_blighted_parcels + 
+    num_violations_nearby_parcels + earlier_nuiscance_offences
+
+models <- 1:10 %>% map(~ svm(complete_formula_minus_council_di, 
+                             data = train_svm[-k_folds[[.x]],]))
 
 predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = train_svm[k_folds[[.x]],]))
 
@@ -161,8 +202,6 @@ models[[3]]
 
 
 ```
-
-
 
 Now try random forest:
 

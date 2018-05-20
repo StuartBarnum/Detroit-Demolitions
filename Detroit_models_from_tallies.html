@@ -271,6 +271,129 @@ for (index in 1:10) {
 ##           25) total_fines_by_parcel&gt;=25 233   81 1 (0.3476395 0.6523605) *
 ##         13) num_vacant_parcels&gt;=92.5 187   52 1 (0.2780749 0.7219251) *
 ##        7) num_nearby_blighted_parcels&gt;=4.5 846  206 1 (0.2434988 0.7565012) *</code></pre>
+<p>Although I believe it is useful to see a quantiative relationship between blight in one building and blight in nearby builings, some may obect to the use of blight to predict blight. (To to clear, the count for number of nearby blighted parcels does not include the parcel for which we are making predictions.) As can be seen below, removing this variable results in a model with an accuracy of roughly 1.5 percentage points lower.</p>
+<pre class="r"><code>complete_formula_minus_nearby_blight &lt;- blighted ~ total_fines_by_parcel + number_of_violations_by_parcel + 
+  improve_issues_tallies + earlier_property_crime_incidents + 
+  earlier_violent_crime_incidents + total_acre + council_di + frontage + num_vacant_parcels +
+  num_violations_nearby_parcels + earlier_nuiscance_offences
+
+models &lt;- 1:10 %&gt;% map(~ rpart(complete_formula_minus_nearby_blight, data = train[-k_folds[[.x]],],
+                               method = &quot;class&quot;, control = rpart.control(cp = 0.003)))
+
+predictions &lt;- 1:10 %&gt;% map(~ predict(models[[.x]], newdata = train[k_folds[[.x]],], type = &quot;class&quot;))
+predictions &lt;- 1:10 %&gt;% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies &lt;- 1:10 %&gt;% 
+  map(~ mean(as.numeric(! predictions[[.x]] &lt; 0.5) == train[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))</code></pre>
+<pre><code>## [1] 0.6959597</code></pre>
+<pre class="r"><code>sd(as.numeric(accuracies))</code></pre>
+<pre><code>## [1] 0.02561397</code></pre>
+<pre class="r"><code>#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] &gt; 0.5), truth = train[k_folds[[index]],]$blighted))
+}</code></pre>
+<pre><code>##        truth
+## pred      0   1
+##   FALSE 129  51
+##   TRUE   57 127
+##        truth
+## pred      0   1
+##   FALSE 129  49
+##   TRUE   58 129
+##        truth
+## pred      0   1
+##   FALSE 138  47
+##   TRUE   48 131
+##        truth
+## pred      0   1
+##   FALSE 126  54
+##   TRUE   60 124
+##        truth
+## pred      0   1
+##   FALSE 116  58
+##   TRUE   70 120
+##        truth
+## pred      0   1
+##   FALSE 120  45
+##   TRUE   66 133
+##        truth
+## pred      0   1
+##   FALSE 127  53
+##   TRUE   59 125
+##        truth
+## pred      0   1
+##   FALSE 124  45
+##   TRUE   62 133
+##        truth
+## pred      0   1
+##   FALSE 132  49
+##   TRUE   54 129
+##        truth
+## pred      0   1
+##   FALSE 112  48
+##   TRUE   74 130</code></pre>
+<pre class="r"><code>models[[3]]</code></pre>
+<pre><code>## n= 3277 
+## 
+## node), split, n, loss, yval, (yprob)
+##       * denotes terminal node
+## 
+##    1) root 3277 1602 0 (0.5111382 0.4888618)  
+##      2) num_vacant_parcels&lt; 35.5 1484  439 0 (0.7041779 0.2958221)  
+##        4) total_fines_by_parcel&lt; 35 1034  220 0 (0.7872340 0.2127660) *
+##        5) total_fines_by_parcel&gt;=35 450  219 0 (0.5133333 0.4866667)  
+##         10) total_fines_by_parcel&lt; 512.5 236   96 0 (0.5932203 0.4067797) *
+##         11) total_fines_by_parcel&gt;=512.5 214   91 1 (0.4252336 0.5747664)  
+##           22) number_of_violations_by_parcel&gt;=2.5 154   75 1 (0.4870130 0.5129870)  
+##             44) total_fines_by_parcel&lt; 3025 124   57 0 (0.5403226 0.4596774)  
+##               88) earlier_violent_crime_incidents&lt; 399.5 115   49 0 (0.5739130 0.4260870)  
+##                176) earlier_property_crime_incidents&gt;=246.5 20    2 0 (0.9000000 0.1000000) *
+##                177) earlier_property_crime_incidents&lt; 246.5 95   47 0 (0.5052632 0.4947368)  
+##                  354) num_violations_nearby_parcels&lt; 19.5 21    5 0 (0.7619048 0.2380952) *
+##                  355) num_violations_nearby_parcels&gt;=19.5 74   32 1 (0.4324324 0.5675676) *
+##               89) earlier_violent_crime_incidents&gt;=399.5 9    1 1 (0.1111111 0.8888889) *
+##             45) total_fines_by_parcel&gt;=3025 30    8 1 (0.2666667 0.7333333) *
+##           23) number_of_violations_by_parcel&lt; 2.5 60   16 1 (0.2666667 0.7333333) *
+##      3) num_vacant_parcels&gt;=35.5 1793  630 1 (0.3513664 0.6486336)  
+##        6) num_vacant_parcels&lt; 65.5 801  352 1 (0.4394507 0.5605493)  
+##         12) total_fines_by_parcel&lt; 25 518  255 0 (0.5077220 0.4922780)  
+##           24) council_di=4,5,6 205   72 0 (0.6487805 0.3512195)  
+##             48) total_acre&gt;=0.0655 191   61 0 (0.6806283 0.3193717) *
+##             49) total_acre&lt; 0.0655 14    3 1 (0.2142857 0.7857143) *
+##           25) council_di=1,2,3,7 313  130 1 (0.4153355 0.5846645)  
+##             50) total_acre&lt; 0.0825 29    9 0 (0.6896552 0.3103448) *
+##             51) total_acre&gt;=0.0825 284  110 1 (0.3873239 0.6126761)  
+##              102) total_acre&gt;=0.143 22    6 0 (0.7272727 0.2727273) *
+##              103) total_acre&lt; 0.143 262   94 1 (0.3587786 0.6412214)  
+##                206) improve_issues_tallies&gt;=43.5 87   41 1 (0.4712644 0.5287356)  
+##                  412) num_vacant_parcels&lt; 48 51   19 0 (0.6274510 0.3725490) *
+##                  413) num_vacant_parcels&gt;=48 36    9 1 (0.2500000 0.7500000) *
+##                207) improve_issues_tallies&lt; 43.5 175   53 1 (0.3028571 0.6971429) *
+##         13) total_fines_by_parcel&gt;=25 283   89 1 (0.3144876 0.6855124) *
+##        7) num_vacant_parcels&gt;=65.5 992  278 1 (0.2802419 0.7197581)  
+##         14) num_vacant_parcels&lt; 112.5 631  208 1 (0.3296355 0.6703645)  
+##           28) council_di=3,4,5,6 391  154 1 (0.3938619 0.6061381)  
+##             56) improve_issues_tallies&gt;=47.5 30    6 0 (0.8000000 0.2000000) *
+##             57) improve_issues_tallies&lt; 47.5 361  130 1 (0.3601108 0.6398892)  
+##              114) total_fines_by_parcel&lt; 25 240  105 1 (0.4375000 0.5625000)  
+##                228) improve_issues_tallies&gt;=17.5 151   75 0 (0.5033113 0.4966887)  
+##                  456) improve_issues_tallies&lt; 24.5 54   19 0 (0.6481481 0.3518519)  
+##                    912) num_vacant_parcels&gt;=71.5 45   12 0 (0.7333333 0.2666667) *
+##                    913) num_vacant_parcels&lt; 71.5 9    2 1 (0.2222222 0.7777778) *
+##                  457) improve_issues_tallies&gt;=24.5 97   41 1 (0.4226804 0.5773196)  
+##                    914) earlier_violent_crime_incidents&lt; 130.5 14    3 0 (0.7857143 0.2142857) *
+##                    915) earlier_violent_crime_incidents&gt;=130.5 83   30 1 (0.3614458 0.6385542)  
+##                     1830) frontage&gt;=41 13    4 0 (0.6923077 0.3076923) *
+##                     1831) frontage&lt; 41 70   21 1 (0.3000000 0.7000000) *
+##                229) improve_issues_tallies&lt; 17.5 89   29 1 (0.3258427 0.6741573) *
+##              115) total_fines_by_parcel&gt;=25 121   25 1 (0.2066116 0.7933884) *
+##           29) council_di=1,2,7 240   54 1 (0.2250000 0.7750000) *
+##         15) num_vacant_parcels&gt;=112.5 361   70 1 (0.1939058 0.8060942)  
+##           30) frontage&gt;=66.5 9    2 0 (0.7777778 0.2222222) *
+##           31) frontage&lt; 66.5 352   63 1 (0.1789773 0.8210227) *</code></pre>
 <p>Now try glm</p>
 <pre class="r"><code>models &lt;- 1:10 %&gt;% map(~ glm(complete_formula, data = train[-k_folds[[.x]],], family = &quot;binomial&quot;))
 
@@ -740,12 +863,12 @@ predictions &lt;- combined_predictions_df %&gt;% select(800:1200) %&gt;%
 predictions &lt;- round(predictions)
 
 mean(as.numeric(predictions == combined_predictions_df$truth))</code></pre>
-<pre><code>## [1] 0.7209558</code></pre>
+<pre><code>## [1] 0.7234276</code></pre>
 <pre class="r"><code>rm(model_info_list)
 gc()</code></pre>
 <pre><code>##             used  (Mb) gc trigger   (Mb) limit (Mb)  max used   (Mb)
-## Ncells   2565193 137.0   33869632 1808.9         NA  24068999 1285.5
-## Vcells 108528767 828.1  337292534 2573.4      16384 396866985 3027.9</code></pre>
+## Ncells   2565264 137.0   33889254 1809.9         NA  24068872 1285.5
+## Vcells 108529827 828.1  337298010 2573.4      16384 396857188 3027.8</code></pre>
 <p>Consider the Pearson correlations coefficients (point biserials):</p>
 <pre class="r"><code>correlations &lt;- complete_tally_set %&gt;% 
   select(-parcelnum) %&gt;%
@@ -1291,13 +1414,13 @@ predictions &lt;- combined_predictions_df %&gt;% select(900:1100) %&gt;%
 predictions &lt;- round(predictions)
 
 mean(as.numeric(predictions == combined_predictions_df$truth))</code></pre>
-<pre><code>## [1] 0.7251926</code></pre>
+<pre><code>## [1] 0.7226243</code></pre>
 <p>Remove the information returned by the parallel loop, which includes each of the rpart models that were generated as part of adaboost.</p>
 <pre class="r"><code>rm(model_info_list)
 gc()</code></pre>
-<pre><code>##             used  (Mb) gc trigger   (Mb) limit (Mb)  max used   (Mb)
-## Ncells   2578843 137.8   27095705 1447.1         NA  24068999 1285.5
-## Vcells 113566686 866.5  323864832 2470.9      16384 396866985 3027.9</code></pre>
+<pre><code>##             used  (Mb) gc trigger (Mb) limit (Mb)  max used   (Mb)
+## Ncells   2578914 137.8   27111403 1448         NA  24068872 1285.5
+## Vcells 113567746 866.5  323870089 2471      16384 396857188 3027.8</code></pre>
 <p>Now look at random forest over the complete balanced set.</p>
 <pre class="r"><code>#ensure that the outcome variable is of type claass
 complete_tally_set$blighted &lt;- as.factor(complete_tally_set$blighted)
@@ -1336,13 +1459,13 @@ accuracies &lt;- 1:10 %&gt;%
 #mean accuracy for each fold
 accuracies</code></pre>
 <pre><code>## [[1]]
-## [1] 0.7196262
+## [1] 0.7242991
 ## 
 ## [[2]]
-## [1] 0.7196262
+## [1] 0.7266355
 ## 
 ## [[3]]
-## [1] 0.7226107
+## [1] 0.7296037
 ## 
 ## [[4]]
 ## [1] 0.7056075
@@ -1351,24 +1474,24 @@ accuracies</code></pre>
 ## [1] 0.7149533
 ## 
 ## [[6]]
-## [1] 0.7389277
+## [1] 0.7272727
 ## 
 ## [[7]]
-## [1] 0.7009346
+## [1] 0.7079439
 ## 
 ## [[8]]
-## [1] 0.7296037
+## [1] 0.7365967
 ## 
 ## [[9]]
-## [1] 0.728972
+## [1] 0.7266355
 ## 
 ## [[10]]
-## [1] 0.7126168</code></pre>
+## [1] 0.7102804</code></pre>
 <pre class="r"><code>#mean accuracy and standard deviation over the folds
 mean(unlist(accuracies))</code></pre>
-<pre><code>## [1] 0.7193479</code></pre>
+<pre><code>## [1] 0.7209828</code></pre>
 <pre class="r"><code>sd(unlist(accuracies))</code></pre>
-<pre><code>## [1] 0.01147192</code></pre>
+<pre><code>## [1] 0.01048752</code></pre>
 <pre class="r"><code>#confusion matrices for the models
 for(index in 1:10) {
 print(table(pred = predictions[[index]], 
@@ -1376,44 +1499,44 @@ print(table(pred = predictions[[index]],
 }</code></pre>
 <pre><code>##     truth
 ## pred   0   1
-##    0 161  61
-##    1  59 147
+##    0 163  61
+##    1  57 147
 ##     truth
 ## pred   0   1
-##    0 151  51
-##    1  69 157
+##    0 155  52
+##    1  65 156
 ##     truth
 ## pred   0   1
-##    0 155  54
-##    1  65 155
+##    0 158  54
+##    1  62 155
 ##     truth
 ## pred   0   1
-##    0 145  51
-##    1  75 157
+##    0 144  50
+##    1  76 158
 ##     truth
 ## pred   0   1
-##    0 151  53
-##    1  69 155
+##    0 155  57
+##    1  65 151
 ##     truth
 ## pred   0   1
-##    0 154  46
-##    1  66 163
+##    0 154  51
+##    1  66 158
 ##     truth
 ## pred   0   1
-##    0 144  52
-##    1  76 156
+##    0 145  50
+##    1  75 158
 ##     truth
 ## pred   0   1
-##    0 155  51
-##    1  65 158
+##    0 158  51
+##    1  62 158
 ##     truth
 ## pred   0   1
-##    0 168  64
-##    1  52 144
+##    0 168  65
+##    1  52 143
 ##     truth
 ## pred   0   1
-##    0 157  60
-##    1  63 148</code></pre>
+##    0 158  62
+##    1  62 146</code></pre>
 <pre class="r"><code>randomForest_models[[4]]</code></pre>
 <pre><code>## 
 ## Call:
@@ -1422,11 +1545,11 @@ print(table(pred = predictions[[index]],
 ##                      Number of trees: 1000
 ## No. of variables tried at each split: 3
 ## 
-##         OOB estimate of  error rate: 27.19%
+##         OOB estimate of  error rate: 27.29%
 ## Confusion matrix:
 ##      0    1 class.error
-## 0 1410  570   0.2878788
-## 1  478 1397   0.2549333</code></pre>
+## 0 1400  580   0.2929293
+## 1  472 1403   0.2517333</code></pre>
 
 
 
