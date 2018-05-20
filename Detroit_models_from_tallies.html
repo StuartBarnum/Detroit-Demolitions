@@ -125,7 +125,6 @@ $(document).ready(function () {
 </div>
 
 
-<p>Packages used repeatedly:</p>
 <pre class="r"><code>library(tidyverse)</code></pre>
 <pre><code>## ── Attaching packages ──────────────────────────────────────────────────────────────────────────── tidyverse 1.2.1.9000 ──</code></pre>
 <pre><code>## ✔ ggplot2 2.2.1.9000     ✔ purrr   0.2.4     
@@ -741,12 +740,12 @@ predictions &lt;- combined_predictions_df %&gt;% select(800:1200) %&gt;%
 predictions &lt;- round(predictions)
 
 mean(as.numeric(predictions == combined_predictions_df$truth))</code></pre>
-<pre><code>## [1] 0.7184839</code></pre>
+<pre><code>## [1] 0.7209558</code></pre>
 <pre class="r"><code>rm(model_info_list)
 gc()</code></pre>
 <pre><code>##             used  (Mb) gc trigger   (Mb) limit (Mb)  max used   (Mb)
-## Ncells   2572186 137.4   33850555 1807.9         NA  24074544 1285.8
-## Vcells 108544191 828.2  337346738 2573.8      16384 396811282 3027.5</code></pre>
+## Ncells   2565193 137.0   33869632 1808.9         NA  24068999 1285.5
+## Vcells 108528767 828.1  337292534 2573.4      16384 396866985 3027.9</code></pre>
 <p>Consider the Pearson correlations coefficients (point biserials):</p>
 <pre class="r"><code>correlations &lt;- complete_tally_set %&gt;% 
   select(-parcelnum) %&gt;%
@@ -1292,13 +1291,13 @@ predictions &lt;- combined_predictions_df %&gt;% select(900:1100) %&gt;%
 predictions &lt;- round(predictions)
 
 mean(as.numeric(predictions == combined_predictions_df$truth))</code></pre>
-<pre><code>## [1] 0.7240252</code></pre>
+<pre><code>## [1] 0.7251926</code></pre>
 <p>Remove the information returned by the parallel loop, which includes each of the rpart models that were generated as part of adaboost.</p>
 <pre class="r"><code>rm(model_info_list)
 gc()</code></pre>
 <pre><code>##             used  (Mb) gc trigger   (Mb) limit (Mb)  max used   (Mb)
-## Ncells   2585836 138.1   27080444 1446.3         NA  24074544 1285.8
-## Vcells 113582110 866.6  323916868 2471.3      16384 396811282 3027.5</code></pre>
+## Ncells   2578843 137.8   27095705 1447.1         NA  24068999 1285.5
+## Vcells 113566686 866.5  323864832 2470.9      16384 396866985 3027.9</code></pre>
 <p>Now look at random forest over the complete balanced set.</p>
 <pre class="r"><code>#ensure that the outcome variable is of type claass
 complete_tally_set$blighted &lt;- as.factor(complete_tally_set$blighted)
@@ -1337,39 +1336,39 @@ accuracies &lt;- 1:10 %&gt;%
 #mean accuracy for each fold
 accuracies</code></pre>
 <pre><code>## [[1]]
-## [1] 0.7266355
+## [1] 0.7196262
 ## 
 ## [[2]]
-## [1] 0.7359813
+## [1] 0.7196262
 ## 
 ## [[3]]
-## [1] 0.7342657
+## [1] 0.7226107
 ## 
 ## [[4]]
-## [1] 0.7079439
+## [1] 0.7056075
 ## 
 ## [[5]]
 ## [1] 0.7149533
 ## 
 ## [[6]]
-## [1] 0.7296037
+## [1] 0.7389277
 ## 
 ## [[7]]
-## [1] 0.6962617
+## [1] 0.7009346
 ## 
 ## [[8]]
-## [1] 0.7435897
+## [1] 0.7296037
 ## 
 ## [[9]]
-## [1] 0.7172897
+## [1] 0.728972
 ## 
 ## [[10]]
-## [1] 0.7172897</code></pre>
+## [1] 0.7126168</code></pre>
 <pre class="r"><code>#mean accuracy and standard deviation over the folds
 mean(unlist(accuracies))</code></pre>
-<pre><code>## [1] 0.7223814</code></pre>
+<pre><code>## [1] 0.7193479</code></pre>
 <pre class="r"><code>sd(unlist(accuracies))</code></pre>
-<pre><code>## [1] 0.01431377</code></pre>
+<pre><code>## [1] 0.01147192</code></pre>
 <pre class="r"><code>#confusion matrices for the models
 for(index in 1:10) {
 print(table(pred = predictions[[index]], 
@@ -1377,44 +1376,44 @@ print(table(pred = predictions[[index]],
 }</code></pre>
 <pre><code>##     truth
 ## pred   0   1
-##    0 163  60
-##    1  57 148
+##    0 161  61
+##    1  59 147
 ##     truth
 ## pred   0   1
-##    0 154  47
-##    1  66 161
+##    0 151  51
+##    1  69 157
 ##     truth
 ## pred   0   1
-##    0 160  54
-##    1  60 155
+##    0 155  54
+##    1  65 155
 ##     truth
 ## pred   0   1
-##    0 145  50
-##    1  75 158
+##    0 145  51
+##    1  75 157
 ##     truth
 ## pred   0   1
-##    0 153  55
-##    1  67 153
+##    0 151  53
+##    1  69 155
 ##     truth
 ## pred   0   1
-##    0 153  49
-##    1  67 160
+##    0 154  46
+##    1  66 163
 ##     truth
 ## pred   0   1
-##    0 143  53
-##    1  77 155
+##    0 144  52
+##    1  76 156
 ##     truth
 ## pred   0   1
-##    0 161  51
-##    1  59 158
+##    0 155  51
+##    1  65 158
 ##     truth
 ## pred   0   1
-##    0 164  65
-##    1  56 143
+##    0 168  64
+##    1  52 144
 ##     truth
 ## pred   0   1
-##    0 158  59
-##    1  62 149</code></pre>
+##    0 157  60
+##    1  63 148</code></pre>
 <pre class="r"><code>randomForest_models[[4]]</code></pre>
 <pre><code>## 
 ## Call:
@@ -1423,11 +1422,11 @@ print(table(pred = predictions[[index]],
 ##                      Number of trees: 1000
 ## No. of variables tried at each split: 3
 ## 
-##         OOB estimate of  error rate: 27.44%
+##         OOB estimate of  error rate: 27.19%
 ## Confusion matrix:
 ##      0    1 class.error
-## 0 1405  575    0.290404
-## 1  483 1392    0.257600</code></pre>
+## 0 1410  570   0.2878788
+## 1  478 1397   0.2549333</code></pre>
 
 
 
