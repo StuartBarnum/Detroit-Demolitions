@@ -90,9 +90,79 @@ models[[3]]
 
 ```
 
-As more variables were added to the tally dataset, I also applied random forest (using the `randomForest` package) and, finally, adaboost (using my own implementation in R), and support vector machines (using the `e1071` package). After the tally datset was complete, I attempted to tune the models by changing the values of some of the parameters, such as the complexity parameter associated with the rpart function. In the end, most of the improvement in accuracy as I worked on this project was with the introduction of variables concerning blight at nearby parcels, espeically in the case of the number of nearby vacant lots (other than the parcel for which prediction is taking place) and the number of nearby blighted parcels (other than the parcel for which prediction is taking place). The decision-tree models achieved an average accuracy, accross the the ten models constructed in the k-fold cross checking of 71% with the with the complexity parameter set at 0.003 (reduced from the default value of 0.01). Similar calculations of average accuracies for random forest and adaboost models yielded 0.73. The accuracy of 0.73 in the adaboost was achieved with the trees ( the "weak" classifiers) in the form of decision stumps---trees that contained at most one split, and in some cases no splits at all. Adaboost over trees containing more than one split resulted in accuracies at least somewhat less than this.
+As more variables were added to the tally dataset, I also applied random forest (using the `randomForest` package) and, finally, adaboost (using my own implementation in R), and support vector machines (using the `e1071` package). After the tally datset was complete, I attempted to tune the models by changing the values of some of the parameters, such as the complexity parameter associated with the rpart function. In the end, most of the improvement in accuracy as I worked on this project was with the introduction of variables concerning blight at nearby parcels, espeically in the case of the number of nearby vacant lots (other than the parcel for which prediction is taking place) and the number of nearby blighted parcels (other than the parcel for which prediction is taking place). The decision-tree models achieved an average accuracy, accross the the ten models constructed in the k-fold cross checking of 71% with the with the complexity parameter set at 0.003 (reduced from the default value of 0.01). Similar calculations of average accuracies for random forest and adaboost models yielded 0.73. The accuracy of 0.73 in the adaboost was achieved with the trees ( the "weak" classifiers as per the adaboost algorithm) in the form of decision stumps---trees that contained at most one split, and in some cases no splits at all. Adaboost over trees containing more than one split resulted in accuracies at least somewhat less than this.
 
-I should emphasize that the counts of nearby buildings that were blighted did not include the building for which we were predicting. (Otherwise, the analysis would be circular.) Neverthess, I tried running some of the approaches to model-building without using the variable for nearby blight. For the decision-tree models, this resulted in an average accuracy, over the 10 models contructing during k-fold cross checking, of 0.70. 
+I should emphasize that the counts of nearby blighted buildings did not include the building for which we were predicting. (Otherwise, the analysis would be circular.) Neverthess, I tried running some of the approaches to model-building without using the variable for nearby blighted buildings. For the decision-tree models, this resulted in an average accuracy, over the 10 models contructing during k-fold cross checking, of 0.70. 
 
 #### Final thoughts and analysis
+Given the relative concreteness and understandability of decision trees, together with the fact that these models were only somewhat less effective as predictors than the more advanced models, I suspect that the the decision trees may parovide the best of the models for at least some uses. With this in mind, it is espcially notable that a remarkably simple models may provide a useful predictor. First all all, I run the analysis that provided that most accurate results.
 
+```{r}
+
+#separate the examples to be used for the training from the twenty percent of the examples to be withheld for final testing (remembering that we will do 10-fold cross validation over the training set)
+
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+complete_tally_set$blighted <- as.factor(complete_tally_set$blighted)
+
+#partition the training set into ten subsets, while maintaining a ballance between expamples labeled as blighted and examples not so labeled
+set.seed(451)
+k_folds <- caret::createFolds(complete_tally_set$blighted)
+
+models <- 1:10 %>% map(~ rpart(complete_formula, data = complete_tally_set[-k_folds[[.x]],],
+                               method = "class", control = rpart.control(cp = 0.003)))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = complete_tally_set[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == complete_tally_set[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = complete_tally_set[k_folds[[index]],]$blighted))
+}
+
+models[[3]]
+
+```
+
+Adjusting the complexity parameter somewhat higher (increasing the threshold that must be if a split is to be implemented), we abtain the following remarkably simple model, which funcations roughly as the above. 
+
+```{r}
+
+#separate the examples to be used for the training from the twenty percent of the examples to be withheld for final testing (remembering that we will do 10-fold cross validation over the training set)
+
+#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+complete_tally_set$blighted <- as.factor(complete_tally_set$blighted)
+
+#partition the training set into ten subsets, while maintaining a ballance between expamples labeled as blighted and examples not so labeled
+set.seed(451)
+k_folds <- caret::createFolds(complete_tally_set$blighted)
+
+models <- 1:10 %>% map(~ rpart(complete_formula, data = complete_tally_set[-k_folds[[.x]],],
+                               method = "class", control = rpart.control(cp = 0.01)))
+
+predictions <- 1:10 %>% map(~ predict(models[[.x]], newdata = complete_tally_set[k_folds[[.x]],], type = "class"))
+predictions <- 1:10 %>% map(~as.numeric(predictions[[.x]]) - 1)
+
+accuracies <- 1:10 %>% 
+  map(~ mean(as.numeric(! predictions[[.x]] < 0.5) == complete_tally_set[k_folds[[.x]],]$blighted))
+
+#summary statistics over the models
+mean(as.numeric(accuracies))
+sd(as.numeric(accuracies))
+
+#confusion matrices for the models
+for (index in 1:10) {
+  print(table(pred = (predictions[[index]] > 0.5), truth = complete_tally_set[k_folds[[index]],]$blighted))
+}
+
+models[[6]]
+
+```
+
+Note that the above decision tree is the result of the rpart model for all of the 10 elements of the partition associated with k-fold cross validation. As is well-known about the city of Detroit, many of of the vacant parcels once contained buildings, which were torn down due to bight. We thus see that past and current nearby blight may provide the best predictors of blight in a particular area. 
