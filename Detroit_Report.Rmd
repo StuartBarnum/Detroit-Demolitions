@@ -229,10 +229,11 @@ complete_tally_set %>% filter(num_nearby_blighted_parcels < 20 & num_vacant_parc
           (within the balanced dataset)") +
   theme(plot.title = element_text(hjust = 0.5))
 
-complete_tally_set %>% filter(num_nearby_blighted_parcels < 20 & num_vacant_parcels < 200) %>%
+complete_tally_set %>% mutate(blighted = as.numeric(blighted) - 1) %>%
+  filter(num_nearby_blighted_parcels < 20 & num_vacant_parcels < 200) %>%
   ggplot() + stat_summary_2d(aes(x = num_nearby_blighted_parcels,
                                  y = num_vacant_parcels,
-                                 z = as.numeric(blighted) / 2), 
+                                 z = blighted), 
                              bins = 15) +
   ggtitle("Blightedness as a function of num_nearby_blighted_parcels \nand num_vacant_parcels") +
   theme(plot.title = element_text(hjust = 0.5)) +
