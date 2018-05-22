@@ -2040,4 +2040,6 @@ write_rds(tallies_with_nearby_violations, "calculated_tallies.rds")
 
 write_rds(training_parcelnums, "training_parcelnums.rds")
 
+
+#land bank ownership, foreclosure, David Martin
 ```
