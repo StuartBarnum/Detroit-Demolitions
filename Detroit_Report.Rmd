@@ -124,7 +124,7 @@ complete_tally_set %>% mutate(blighted = as.factor(blighted)) %>%
        title = "Distribution across Parcels of Total Fine Amounts") +
   theme(plot.title = element_text(hjust = 0.5)) + 
   coord_cartesian(xlim = c(0, 1200)) +
-  scale_color_discrete(name = NULL,
+  scale_color_discrete(name = "parcel status",
                        breaks = c("1", "0"),
                        labels = c("blighted", "not blighted"))
 
