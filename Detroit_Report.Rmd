@@ -218,7 +218,7 @@ models[[3]]
 
 I should note that all of the models generated in the above k-fold cross-valiation process have the same form as does the above decision-tree model (with somewhat different break points, such as with 52.5 instead of 50.5 at node 4).  
 
-As is well-known about the city of Detroit, many of of the vacant parcels once contained buildings, which were torn down due to bight. Given the suggestion that the number of nearby blighted parcels and the number of nearby vacant parcels are especially effective as predictors, we see that past and more recent nearby blight may provide the best predictors of the blightedness of any given building. It may thus be interesting, finally, to consider a plot of joint distribution of these two predictors across the parcels in our balanced dataset, and then a plot of the concentration of blightedness as a function of the two predictors.
+As is well-known about the city of Detroit, many of of the vacant parcels once contained buildings, which were torn down due to bight. Given the suggestion that the number of nearby blighted parcels and the number of nearby vacant parcels are especially effective as predictors, we see that past and more recent nearby blight, in our strong sense of the probable destruction of a building, may provide the best predictors of the blightedness of any given building. It may thus be interesting, finally, to consider a plot of joint distribution of these two predictors across the parcels in our balanced dataset, and then a plot of the concentration of blightedness as a function of the two predictors.
 
 ```{r}
 
@@ -242,3 +242,5 @@ complete_tally_set %>% mutate(blighted = as.numeric(blighted) - 1) %>%
 
 
 ```
+
+I should emphasize that the above plots represent a subset of the parcels, reduced so as to have a base rate of blightedness (percentage across the dataset) of roughly 50%, within the Hardest Hit Areas. (The actual rate of blightness in these areas is roughly 2%.) Appliction of this model, or any of the other models discussed in this report, would need to be implemented carefully so as to avoid base rate bias (see https://en.wikipedia.org/wiki/Base_rate_fallacy). Nevertheless, the fact that past building destruction stands out in this way as a predictor of blight should be a useful consideration to policymakers.
