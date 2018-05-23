@@ -137,7 +137,7 @@ I should emphasize that the counts of nearby blighted buildings did not include 
 Most of the model constructions described above can be found at https://stuartbarnum.github.io/Detroit-Demolitions/Detroit_models_from_tallies.html.
 
 #### Final thoughts and analysis
-Given the relative concreteness and understandability of decision trees, together with the fact that these models were only somewhat less effective as predictors than the more advanced models, I suspect that the the decision trees may provide the best of the models for at least some uses. With this in mind, it is especially notable that a remarkably simple model may provide a useful predictor. First of all, consider the analysis that provided that most-accurate decision trees.
+Given the relative concreteness and understandability of decision trees, together with the fact that these models were only somewhat less effective as predictors than the more advanced models, I suspect that the the decision trees may provide the best of the models for at least some uses. With this in mind, it is especially notable that a remarkably simple model may provide a useful predictor. First of all, consider the analysis that provided the most-accurate decision trees.
 
 ```{r}
 
