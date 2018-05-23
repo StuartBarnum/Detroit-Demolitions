@@ -22,6 +22,11 @@ I should note that one possible fault in my approach to the labeling is with the
 
 Another matter of fundamental methods concerns the manner of association of the various potential predictors, such as numbers of blight-related citations associated with a particular building, with the relevant buildings. To make the associations, I used both spatial relationships and, where both necessary and possible, parcel numbers. For example, each record of a blight-related citation includes both a parcel number (identifier of the parcel) and a pair of latitude and longitude coordinates. If the position indicated by the coordinates was within a certain parcel, than that parcel was assumed to be the parcel associated with the citation. Otherwise, if an association could be made by means of identity of parcel numbers (the parcel number for the building and the parcel number recorded with the citation), then the parcel thus associated was deemed to be the parcel associated with the citation. Other associations were made merely by means of geometric relationships (with no consideration of parcel numbers). For example, recorded crime incidents, divided between violent crimes, property crimes, and nuisance crimes, were associated with parcels in virtue of spacial proximity of 200 meters. 
 
+The development of the dataset used for modeling, including code and exploratory graphics, can be found at https://stuartbarnum.github.io/Detroit-Demolitions/Detriot_Draft_3.html
+
+The development of the models used for predicting can be found at
+https://stuartbarnum.github.io/Detroit-Demolitions/Detroit_models_from_tallies.html.
+
 #### Data munging and cleaning
 The project was implemented in R and, at the data munging and cleaning stages, made extensive use of the `tidyverse` packages for data manipulation, `ggmap` for investigative visual maps and for geocoding in cases of missing position coordinates, and the `sf` package for handling spacial information and relationships. The R `sf` package provides an implementation of the simple features standard, ISO 19125-1:2004, for representing real-world objects in computers. Data frames in which spatial information is thus represented become simple features data frames, and it was possible to read the shapefile-format parcels dataset (see https://data.detroitmi.gov/Property-Parcels/Parcel-Map/fxkw-udwf/data) directly into a simple features dataframe. Likewise in the case of datasets I used for the hardest hit areas and for the council districts---these relatively small files, in the form of simple maps of the geometries of the respective areas of the city, were read directly into the simple features format. The other datasets, containing geographic point information, were converted into simple features data frames after I had both eliminated some geographical coordinate information that was clearly incorrect (e.g. blight citations for which the coordinate information indicated a position well outside of Detroit) and, where possible, filled in the missing coordinate information by means of the ggmap `geocode` function, which accesses the Google API for geocoding. Among the data in all of the datasets I used in this project, a total of roughly 5 thousand locations were geocoded. Data for which it was impossible to obtain usable location information was discarded. The conversion into an sf data frame also required some string manipulation, of the raw coordinate information. The coordinate reference system (providing the mapping of coordinates to locations) for all of the sf data frames was 4326, which is standardly used in GPS systems. (See https://www.nceas.ucsb.edu/~frazier/RSpatialGuides/OverviewCoordinateReferenceSystems.pdf for a brief overview of coordinate reference systems.)
 
@@ -30,8 +35,6 @@ Another aspect of the data cleaning involved the parcels dataset. Two notable is
 Another aspect of the parcels data that I investigated carefully was several thousand pairs of parcels that, according to an application of st_join, overlapped. I plotted a random sample of 100 of these pairs of parcels and found no evidence of overlap in the plots. I concluded that the apparent overlap may have been due to the projection (perhaps imperfect projection) of the spherical representation (coordinate representation system 4326 as per above) into a flat representation, and was likely not a problematic issue in my data.
 
 After the various investigative and cleaning steps such as the above were completed, I decided to restrict my analysis to those parcels in the Hardest Hit Areas, and so I removed from the analysis all of the parcels that were not within one of these areas (using, again, `st_join`). I constructed a set of labels for the remaining parcels, consisting of, for each parcel, the parcel number and the correct value with respect to blight (blighted or not blighted). I then cut out most of the rows in the labels dataset for which the value with respect to blight indicated *not blighted*, so as to create a relative balance between positive instances (blighted) and negative instanced (not blighted). The parcels thus removed from the data were selected at random.
-
-The code and exploratory graphics used in the above analysis can be found at https://stuartbarnum.github.io/Detroit-Demolitions/Detriot_Draft_3.html
 
 #### Construction of a tallies dataset
 The predictive models that were eventually constructed in this project used data in the form of tallies (and other sums) from the data that had been processed as described above. All of the tallies were calculated using SQL-style joins on the basis of spatial relationships (`st_join`, again) or, in a few cases, identity of parcel numbers (using the `dplyr` function `inner_join`). After the joining, the results were then grouped and counted (using the `dplyr` package) as one does in SQL. In the applications of st_join, there were two types of tallies. In the first, I simply looked for incidents, such as citations for failure to maintain a property, occurring within a parcel. The other type of application of `st_join` involved looking for incidents that were within a certain distance from a parcel. In the latter type of case, I created a "buffer" around each parcel using the `sf` operation `st_buffer`, thus expanding each each of the parcels by a certain distance, depending on what seemed reasonable, given what I was attempting to count. With the parcels thus expanded, I applied `st_join`, now looking for incidents (and some other entities such as vacant lots) within the expanded parcels. At the end of all of this, the tallies dataset consisted of the parcel numbers for parcels in the balanced set of labels as described above, the value corresponding to blighted or not blighted, and 14 variables providing such tallies. The variables were, roughly, defined as follows.
@@ -50,7 +53,7 @@ kable(variables, format = "html") %>%
 
 ```
 
-As indicated in the following summary statistics, the dataset consists of 4283 rows.
+As indicated in the following summary statistics, the dataset from which models were constructed consists of 4283 rows.
 
 ```{r, message = FALSE}
 
@@ -133,8 +136,6 @@ complete_tally_set %>% mutate(blighted = as.factor(blighted)) %>%
 As more variables were added to the tally dataset, I also applied random forest (using the `randomForest` package) and, finally, adaboost (using my own implementation in R) and support vector machines (using the `e1071` package). After the tally dataset was complete, I attempted to tune the models by changing the values of some of the parameters, such as the complexity parameter associated with the rpart function. In the end, most of the improvement in accuracy as I worked on this project was with the introduction of variables concerning blight at nearby parcels, especially in the case of the number of nearby vacant lots (other than the parcel for which prediction is taking place) and the number of nearby parcels, other than the parcel for which prediction is taking place, that became blighted prior to June of 2016. With the complexity parameter set at 0.003 (reduced from the default value of 0.01), the decision-tree models achieved an average accuracy, across the the ten models constructed in the k-fold cross validation, of 71%. Similar calculations of average accuracies for random forest and adaboost models yielded 0.73. The accuracy of 0.73 in the adaboost was achieved with the trees (the "weak" classifiers as per the adaboost algorithm) in the form of decision stumps---trees that contained at most one split, and in some cases no splits at all. Adaboost over trees containing more than one split resulted in accuracies at least somewhat less than this. The support vector machine models, after standardization of the numerical predictors, yielded an accuracy of 0.72.
 
 I should emphasize that the counts of nearby blighted buildings did not include the building for which we were predicting, and was for the buildings that became blighted (as per our definition) before the time over which my models attempt to predict. Nevertheless, I tried running some of our approaches to model-building without using the variable for nearby blighted buildings. For the decision-tree models, this resulted in an average accuracy, over the 10 models constructed during k-fold cross validation, of 0.70. 
-
-Most of the model constructions described above can be found at https://stuartbarnum.github.io/Detroit-Demolitions/Detroit_models_from_tallies.html.
 
 #### Final thoughts and analysis
 Given the relative concreteness and understandability of decision trees, together with the fact that these models were only somewhat less effective as predictors than the more advanced models, I suspect that the the decision trees may provide the best of the models for at least some uses. With this in mind, it is especially notable that a remarkably simple model may provide a useful predictor. First of all, consider the analysis that provided the most-accurate decision trees.
@@ -224,7 +225,7 @@ As is well-known about the city of Detroit, many of of the vacant parcels once c
 complete_tally_set %>% filter(num_nearby_blighted_parcels < 20 & num_vacant_parcels < 200) %>%
   ggplot() + stat_bin_2d(aes(x = num_nearby_blighted_parcels,
                              y = num_vacant_parcels),
-                         bins = 15) +
+                         bins = 16) +
   ggtitle("Distribution of num_nearby_blighted_parcels and num_vacant_parcels
           (within the balanced dataset)") +
   theme(plot.title = element_text(hjust = 0.5))
@@ -234,7 +235,7 @@ complete_tally_set %>% mutate(blighted = as.numeric(blighted) - 1) %>%
   ggplot() + stat_summary_2d(aes(x = num_nearby_blighted_parcels,
                                  y = num_vacant_parcels,
                                  z = blighted), 
-                             bins = 15) +
+                             bins = 16) +
   ggtitle("Blightedness as a function of num_nearby_blighted_parcels \nand num_vacant_parcels") +
   theme(plot.title = element_text(hjust = 0.5)) +
   scale_fill_continuous(name = "mean\nblightedness")
