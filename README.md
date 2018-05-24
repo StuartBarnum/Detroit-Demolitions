@@ -7,4 +7,4 @@ https://stuartbarnum.github.io/Detroit-Demolitions/Detriot_Draft_3.html.
 
 Most of the construction of models, including decision trees, logistic regression models, support vector machines, adaboost models, and random forest models, can be seen at https://stuartbarnum.github.io/Detroit-Demolitions/Detroit_models_from_tallies.html.
 
-A final report, on the success of my models and a few other interesting aspects, may be found at https://stuartbarnum.github.io/Detroit-Demolitions/Detroit_Report.html.
+A final report, on the success of my models and some interesting upshots, may be found at https://stuartbarnum.github.io/Detroit-Demolitions/Detroit_Report.html.
