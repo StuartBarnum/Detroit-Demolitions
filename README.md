@@ -5,6 +5,6 @@ In addition to the usual tasks of data cleaning, three fundamental challenges we
 The data cleaning and munging, and some preliminary model-building, can be seen at 
 <https://stuartbarnum.github.io/Detroit-Demolitions/Detriot_Draft_3.html>.
 
-Most of the construction of models, including decision trees, logistic regression models, support vector machines, adaboost models, and random forest models, can be seen at https://stuartbarnum.github.io/Detroit-Demolitions/Detroit_models_from_tallies.html.
+Most of the construction of models, including decision trees, logistic regression models, support vector machines, adaboost models, and random forest models, can be seen at <https://stuartbarnum.github.io/Detroit-Demolitions/Detroit_models_from_tallies.html>.
 
-A final report, on the success of my models and an interesting upshot, may be found at https://stuartbarnum.github.io/Detroit-Demolitions/Detroit_Report.html.
+A final report, on the success of my models and an interesting upshot, may be found at <https://stuartbarnum.github.io/Detroit-Demolitions/Detroit_Report.html>.
