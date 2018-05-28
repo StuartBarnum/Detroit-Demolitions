@@ -99,6 +99,7 @@ train$blighted <- as.factor(train$blighted)
 set.seed(294)
 k_folds <- caret::createFolds(train$blighted)
 
+#train over the training portion of each of the folds
 models <- 1:10 %>% map(~ rpart(blighted ~ total_fines_by_parcel + 
                                  number_of_violations_by_parcel,
                                data = train[-k_folds[[.x]],]))
@@ -171,6 +172,7 @@ complete_formula <- blighted ~ total_fines_by_parcel + number_of_violations_by_p
     frontage + num_vacant_parcels + num_nearby_blighted_parcels + 
     num_violations_nearby_parcels + earlier_nuisance_offences
 
+#train over the training portion of each of the folds
 models <- 1:10 %>% map(~ rpart(complete_formula, 
                                data = complete_tally_set[-k_folds[[.x]],],
                                method = "class", control = rpart.control(cp = 0.003)))
@@ -225,7 +227,7 @@ models[[3]]
 
 ```
 
-I should note that all of the models generated in the above k-fold cross-validation process have the same form as does the above decision-tree model (with somewhat different break points, such as with 52.5 instead of 50.5 at node 4). Plotted in a proper decision-tree format (with, again, "1" standing for *blighted* and "0" standing for "not blighted"), the model appears as follows. (Recall that `num_vacant_parcels` pertains to the number of vacant parcels within 200 meters, while `num_nearby_blighted_parcels` pertains to the number of buildings within 100 meters that, according to my data and definitions, became blighted before June of 2016. Also, both of these quantities exclude the building being predicted for.)
+I should note that all of the models generated in the above k-fold cross-validation process have the same form as does the above decision-tree model (with somewhat different break points, such as with 52.5 instead of 50.5 at nodes 4 and 5). Plotted in a proper decision-tree format (with, again, "1" standing for *blighted* and "0" standing for "not blighted"), the model appears as follows. (Recall that `num_vacant_parcels` pertains to the number of vacant parcels within 200 meters, while `num_nearby_blighted_parcels` pertains to the number of buildings within 100 meters that, according to my data and definitions, became blighted before June of 2016. Also, both of these quantities exclude the building being predicted for.)
 
 ```{r, fig.height = 3}
 
@@ -252,7 +254,7 @@ complete_tally_set %>% mutate(blighted = as.numeric(blighted) - 1) %>%
                                  y = num_vacant_parcels,
                                  z = blighted), 
                              bins = 16) +
-  ggtitle("Blightedness as a function of num_nearby_blighted_parcels \nand num_vacant_parcels") +
+  ggtitle("Distribution of blightedness over\nnum_nearby_blighted_parcels and num_vacant_parcels") +
   theme(plot.title = element_text(hjust = 0.5)) +
   scale_fill_continuous(name = "mean\nblightedness")
 
