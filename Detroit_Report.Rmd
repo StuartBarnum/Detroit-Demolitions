@@ -13,6 +13,10 @@ knitr::opts_chunk$set(echo = TRUE)
 
 #####My aim in this project is to gain insight into patterns of urban blight, using open data sets published by the city of Detroit. Blight is understood in terms of issues related to buildings: citations for offenses such as failure to maintain a building or its grounds, blight-related complaints to a city-run hotline, local crime rates, and indicatations that the building is or was likely to be demolished. A building is deemed to have become irredemably blighted if city records indicate that the building was either demolished or likely to be demolished. Given this definition, I trained a variety of algorithms for predicting which buildings will become irredemably blighted. Although as many many as 13 predicitors appear to be at least somewhat effective as predictors---removing any one them appears to make make the most effective models at least somewhat less predictive---two of the predictors stand out as most effective: the number of buildings, other than the building for which the prediction is taking place, within 200 meters that became irredemably blighted before the time over which I attempt to make predictions, and the number of vacant lots within 200 meters. Using a decision tree to predict on the basis these variables alone consistently produced a model with 70% predictive accuracy. Two of the more sophisticated approaches, random forest and adaboost, made use of all 13 of the variables and yielded a predictive accuracy of roughly 73%.
 
+#####Complete development of the dataset used for modeling, including code and exploratory graphics, can be found at <https://stuartbarnum.github.io/Detroit-Demolitions/Detriot_Draft_3.html>.
+
+#####Complete development of the models used for predicting can be found at <https://stuartbarnum.github.io/Detroit-Demolitions/Detroit_models_from_tallies.html>.
+
 #### General methods
 After a significant amount of data cleaning (as described in the next section), one of the first tasks in this project was to define a list of buildings. This could be done in one of at least two ways. In the first, suggested as a possible method in the instructions for this assignment, buildings might be identified with clusters of incidents such as, perhaps, recorded crime incidents and citations for blight. I elected not to used this method for a number of reasons. The first reason is the possibility that there may be clusters of incidents associated with non-buildings such as vacant lots and parks, and the possibility that there may be buildings at which there were very few or no incidents. As it would be impossible to identify all or most of the cases of either of these types, such cases may distort the analysis. Another reason was the availability of a relatively clean set of parcel (property lot) data, which included both geographical information about the parcels and information about any buildings on the parcels. Buildings can thus be represented in terms of a subset of these parcels. One of the drawbacks of this latter approach is that some of the parcels contain, or have contained, more than one building. And although it would be possible to eliminate from the data the parcels that, according to the data, *currently* contain more than one building, it is not possible to determine from the available data the parcels that have, in the past, contained more than one building (for the cases in which, for example, all of the buildings within a parcel have been demolished). Although either of the two methods may provide valuable insight, I elected to use the parcel data. The analysis was done on parcels that have, since May of 2016, contained at least one building. For example, although the data may indicate that no building currently exists on a given parcel, the data may indicate that a building on that parcel was dismantled in 2017, thus indicating that a building existed on that parcel.
 
@@ -21,11 +25,6 @@ The next step in the analysis was to assign a set of labels, irredeemably blight
 I should note that one possible fault in my approach to the labeling is with the fact that we used the demolitions permits data within our operational construal of blight. After all, for example, a wealthy resident might purchase an impeccably maintained home and then demolish it (with the requisite permit) to build a larger home. Likewise in the case of other buildings demolished in order to make room for other buildings. With this issue in mind, I restricted my analysis to those areas within Detroit that have been identified as Hardest Hit Areas (see http://d3-d3.opendata.arcgis.com/datasets/383eb730952e470389f09617b5448026_0), for which federal funding is available for the demolition program. The assumption, here, is that, in such areas, a smaller proportion of the buildings that were torn down were sound (not genuinely blighted) buildings that were, again, torn down simply to make room for other buildings (or parking lots, etc.).
 
 Another matter of fundamental methods concerns the manner of association of the various potential predictors, such as numbers of blight-related citations associated with a particular building, with the relevant buildings. To make the associations, I used both spatial relationships and, where both necessary and possible, parcel numbers. For example, each record of a blight-related citation includes both a parcel number (identifier of the parcel) and a pair of latitude and longitude coordinates. If the position indicated by the coordinates was within a certain parcel, than that parcel was assumed to be the parcel associated with the citation. Otherwise, if an association could be made by means of identity of parcel numbers (the parcel number for the building and the parcel number recorded with the citation), then the parcel thus associated was deemed to be the parcel associated with the citation. Other associations were made merely by means of geometric relationships (with no consideration of parcel numbers). For example, recorded crime incidents, divided between violent crimes, property crimes, and nuisance crimes, were associated with parcels in virtue of spatial proximity of 200 meters. 
-
-The development of the dataset used for modeling, including code and exploratory graphics, can be found at https://stuartbarnum.github.io/Detroit-Demolitions/Detriot_Draft_3.html
-
-The development of the models used for predicting can be found at
-https://stuartbarnum.github.io/Detroit-Demolitions/Detroit_models_from_tallies.html.
 
 #### Data munging and cleaning
 The project was implemented in R and, at the data munging and cleaning stages, made extensive use of the `tidyverse` packages for data manipulation, `ggmap` for investigative visual maps and for geocoding in cases of missing position coordinates, and the `sf` package for handling spatial information and relationships. The R `sf` package provides an implementation of the simple features standard, ISO 19125-1:2004, for representing real-world objects in computers. Data frames in which spatial information is thus represented become simple features data frames, and it was possible to read the shapefile-format parcels dataset (see https://data.detroitmi.gov/Property-Parcels/Parcel-Map/fxkw-udwf/data) directly into a simple features dataframe. Likewise in the case of datasets I used for the hardest hit areas and for the council districts---these relatively small files, in the form of simple maps of the geometries of the respective areas of the city, were read directly into the simple features format. The other datasets, containing geographic point information, were converted into simple features data frames after I had both eliminated some geographical coordinate information that was clearly incorrect (e.g. blight citations for which the coordinate information indicated a position well outside of Detroit) and, where possible, filled in the missing coordinate information by means of the ggmap `geocode` function, which accesses the Google API for geocoding. Among the data in all of the datasets I used in this project, a total of roughly 5,000 locations were geocoded. Data for which it was impossible to obtain usable location information was discarded. The conversion into an sf data frame also required some string manipulation, of the raw coordinate information. The coordinate reference system (providing the mapping of coordinates to locations) for all of the sf data frames was 4326, which is standardly used in GPS systems. (See https://www.nceas.ucsb.edu/~frazier/RSpatialGuides/OverviewCoordinateReferenceSystems.pdf for a brief overview of coordinate reference systems.)
@@ -92,7 +91,7 @@ training_parcelnums <- read_rds("training_parcelnums.rds")
 #separate the examples to be used for the training from the fifteen percent of 
 #the examples to be withheld for final testing
 train <- complete_tally_set %>% filter(parcelnum %in% training_parcelnums)
-#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+
 train$blighted <- as.factor(train$blighted)
 
 #partition the training set into ten subsets, while maintaining a balance between 
@@ -114,13 +113,13 @@ accuracies <- 1:10 %>%
 mean(unlist(accuracies))
 sd(unlist(accuracies))
 
-#confusion matrices for predictions on the 10% of the training set that was not used to build the model
+#confusion matrices for each of the 10 models constructed in our k-fold cross validation
 for (index in 1:10) {
   print(table(pred = (predictions[[index]]), 
               truth = train[k_folds[[index]],]$blighted))
 }
 
-#All of the rpart models in the k-fold cross-validation contained only one split---on 
+#All of the rpart models in the k-fold cross-validation contained only one split--on 
 #the total amount of fines related to blight on the parcel, as in the following.
 models[[3]]
 
@@ -157,14 +156,10 @@ Given the relative concreteness and understandability of decision trees, togethe
 
 ```{r}
 
-#separate the examples to be used for the training from the twenty percent of the 
-#examples to be withheld for final testing (remembering that we will do 10-fold 
-#cross validation over the training set)
-
-#test <- blight_violation_tallies %>% filter(parcelnum %in% testing_parcelnums)
+#we use the complete tally set here, and implement k-fold cross-validation over this somewhat larger set
 complete_tally_set$blighted <- as.factor(complete_tally_set$blighted)
 
-#partition the training set into ten subsets, while maintaining a balance 
+#partition the complete tally set into ten subsets, while maintaining a balance 
 #between examples labeled as blighted and examples not so labeled
 set.seed(451)
 k_folds <- caret::createFolds(complete_tally_set$blighted)
@@ -190,8 +185,7 @@ accuracies <- 1:10 %>%
 mean(as.numeric(accuracies))
 sd(as.numeric(accuracies))
 
-#confusion matrices for predictions on the 10% of the training set that was not used 
-#to build the model
+#confusion matrices for each of the 10 models constructed in our k-fold cross validation
 for (index in 1:10) {
   print(table(pred = predictions[[index]], 
               truth = complete_tally_set[k_folds[[index]],]$blighted))
@@ -220,8 +214,7 @@ accuracies <- 1:10 %>%
 mean(as.numeric(accuracies))
 sd(as.numeric(accuracies))
 
-#confusion matrices for predictions on the 10% of the training set that was not used 
-#to build the model
+#confusion matrices for each of the 10 models constructed in our k-fold cross validation
 for (index in 1:10) {
   print(table(pred = predictions[[index]], 
               truth = complete_tally_set[k_folds[[index]],]$blighted))
@@ -233,7 +226,7 @@ models[[3]]
 
 I should note that all of the models generated in the above k-fold cross-validation process have the same form as does the above decision-tree model (with somewhat different break points, such as with 52.5 instead of 50.5 at node 4). Plotted in a proper decision-tree format (with, again, "1" standing for *blighted* and "0" standing for "not blighted"), the model appears as follows.
 
-```{r}
+```{r, fig.height = 3}
 
 library(rpart.plot)
 rpart.plot(models[[3]], type = 0)

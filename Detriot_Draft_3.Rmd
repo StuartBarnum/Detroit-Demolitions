@@ -919,7 +919,7 @@ rm(completed_in_fund_areas_parcel_spatial, completed_in_fund_areas_parcelnum_joi
 
 ```
 
-We now construct a balanced set of labels, with roughly equal numbers of blighted and non-blighted examples. We then divide the set of parcel numbers into training and test sets, on a ratio of 0.8 to 0.2. Note that we will be using 10-fold cross validation on the training set, with the 20 percent of all of the items set asside for a final test of our model.
+We now construct a balanced set of labels, with roughly equal numbers of blighted and non-blighted examples. We then divide the set of parcel numbers into training and test sets, on a ratio of 0.8 to 0.2. Note that we will be using 10-fold cross validation on the training set, with the 15 percent of all of the items set asside for a final test of our model.
 
 ```{r}
 
