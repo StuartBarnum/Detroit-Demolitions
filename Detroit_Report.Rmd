@@ -137,7 +137,7 @@ complete_tally_set %>% mutate(blighted = as.factor(blighted)) %>%
   ggplot(aes(x = total_fines_by_parcel, 
              color = blighted)) +
   geom_freqpoly(binwidth = 100) +
-  labs(x = "total fines by parcel",
+  labs(x = "total fine amount",
        y = "count per fine-amount interval of 100 dollars",
        title = "Distribution across Parcels of Total Fine Amounts") +
   theme(plot.title = element_text(hjust = 0.5)) + 
