@@ -3,8 +3,8 @@ title: "Predicting Blight in Detroit"
 author: "Stuart Barnum"
 date: "5/20/2018"
 output:
-  html_document: default
   pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -44,13 +44,14 @@ library(readr)
 library(knitr)
 library(kableExtra)
 
-variables <- read_csv("./data/variable_definitions.csv")
+variables <- read_csv("./data/variable_definitions_pdf.csv")
 variables <- variables[complete.cases(variables),]
 
-kable(variables, format = "html") %>%
+kable(variables, format = "latex") %>%
   kable_styling(bootstrap_options = c("striped", "hover"))
 
 ```
+
 As indicated in the following summary statistics, the dataset from which models were constructed consists of 4283 rows.
 
 ```{r, message = FALSE}
