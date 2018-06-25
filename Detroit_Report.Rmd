@@ -233,7 +233,8 @@ models[[3]]
 
 ```
 
-I should note that all of the models generated in the above k-fold cross-validation process have the same form as does the above decision-tree model (with somewhat different break points, such as with 52.5 instead of 50.5 at nodes 4 and 5). Plotted in a proper decision-tree format (with, again, "1" standing for *blighted* and "0" standing for "not blighted"), the model appears as follows. (Recall that `num_vacant_parcels` pertains to the number of vacant parcels within 200 meters, while `num_nearby_blighted_parcels` pertains to the number of buildings within 100 meters that, according to my data and definitions, became blighted before June of 2016. Also, recall that both of these quantities exclude the building being for which we are predicting.)
+I should note that all of the models generated in the above k-fold cross-validation process have the same form as does the above decision-tree model (with somewhat different break points, such as with 52.5 instead of 50.5 at nodes 4 and 5). Plotted in a proper decision-tree format (with, again, "1" standing for *blighted* and "0" standing for "not blighted"), the model appears as follows. (Recall that `num_vacant_parcels` pertains to the number of vacant parcels within 200 meters, while `num_nearby_blighted_parcels` pertains to the number of buildings within 100 meters that, according to my data and definitions, became blighted before June of 2016. Also, recall that both of these quantities exclude the building
+for which we are predicting.)
 
 ```{r, fig.height = 3}
 
